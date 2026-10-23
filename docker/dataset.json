@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "altenhain",
+  "version": "0.11.0",
+  "url": "https://github.com/gottschalkfelix4-source/road-to-assetto/releases/download/data-v0.11.0/altenhain-v0.11.0.tar.gz",
+  "sha256": "9488658e65dc9c431051c0701df7749502e328f865d3f140698f21f7f79b9bfe",
+  "archive_bytes": 206078068,
+  "unpacked_bytes": 224427267,
+  "file_count": 59,
+  "description": "Open geographic inputs and attributed materials; no generated jobs or user settings. See altenhain/THIRD_PARTY.md inside the archive."
+}

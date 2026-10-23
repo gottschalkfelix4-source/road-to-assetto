@@ -1,0 +1,21 @@
+{
+  "id": "rtac_altenhain_langstrasse",
+  "name": "Altenhain - Langstrasse",
+  "city": "Bad Soden am Taunus - Altenhain",
+  "country": "Germany",
+  "road_name": "Langstraße",
+  "search_bbox": [50.15, 8.455, 50.165, 8.48],
+  "road_width_m": 6.0,
+  "road_width_source": "DOP20-interpreted variable width profile at reference scale 6; not surveyed road edges",
+  "sample_spacing_m": 1.0,
+  "terrain_spacing_m": 4.0,
+  "pitboxes": 4,
+  "version": "0.11.0",
+  "road_crossfall": 0.025,
+  "scenery_quality": "high",
+  "vegetation_density": 0.65,
+  "data_dir": "data/altenhain",
+  "osm_source": "https://api.openstreetmap.org/api/0.6/map",
+  "dem_source": "https://inspire-hessen.de/raster/dgm1/ows",
+  "ortho_source": "https://inspire-hessen.de/raster/dop20/ows"
+}

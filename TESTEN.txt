@@ -1,0 +1,381 @@
+LANGSTRASSE ALTENHAIN - VERSION 0.11.0 / LOKALER STRECKENBAU
+
+Version 0.11 ergaenzt offene Hausunterseiten durch Kellerhuellen, niedrige
+Gelaendesockel und separate LoD2-Unterseiten. Die groesseren Kellerflaechen
+uebernehmen die Putzfamilie des Hauses. Die Huelle folgt den tatsaechlichen
+Gebaeude- und Gelaendekanten; Originalwaende und Daecher werden nicht versetzt.
+Die gemeinsame Engine erzeugt dies auch fuer neue Browserauftraege.
+Diese Kulissenbauteile sind abgeleitet, nicht vor Ort vermessen.
+Der vollstaendige Aufbau enthaelt Ergaenzungen an 373 Gebaeuden:
+8.480 Keller-/Sockelteile und 393 Quell-Unterseiten. Die maximal ergaenzte
+Hoehe ist 5,6436 m; Strassen und Nachbarkonturen werden freigehalten.
+Die synthetischen 40-cm-Randstreifen liegen bereits stellenweise unter den
+unveraenderten Originalhaeusern. Dieser Datenkonflikt wird getrennt von
+neuen Uebertritten geprueft und im Basisaudit ausgewiesen.
+
+WEBINTERFACE
+
+1. Im Projektordner Start-Webinterface.cmd oeffnen oder ausfuehren:
+   python -m webapp.server
+2. http://localhost:8765 im Browser oeffnen.
+3. Einen Abschnitt ab 120 m in der vorbereiteten Langstrasse waehlen.
+4. Namen, Breitenfaktor, Detailstufe und Vegetationsdichte einstellen.
+   Der Wert 6 nutzt das variable Luftbildprofil unverkleinert; kleinere Werte
+   skalieren es proportional. 6 bedeutet nicht mehr ueberall 6 m Fahrbahn.
+5. Bauen lassen und das fertige ZIP herunterladen.
+
+Python und die Pakete aus requirements.txt muessen installiert sein.
+Es wird derzeit nur der vorbereitete Bereich in Altenhain unterstuetzt,
+keine weltweite Adresssuche. Auftraege liegen getrennt in web-data/.
+Jede erzeugte Variante bekommt ihre eigene Track-ID und kann neben anderen
+Varianten installiert werden. Der Dienst ist fuer den lokalen PC vorgesehen.
+
+Docker/Compose: Anleitung in DOCKER.md. Standardadresse ist
+http://127.0.0.1:8766; die gepruefte Testinstanz verwendet
+http://127.0.0.1:18765. Der Container enthaelt Blender fuer CPU-Vorschauen
+und benoetigt keine Assetto-Corsa-Installation.
+
+Blender ist nur fuer die gerenderte 3D-Vorschau erforderlich. Eine portable
+Ausgabe unter .tools/ wird erkannt; alternativ ROADTOASSETTO_BLENDER auf die
+Blender-Programmdatei setzen. Ohne Blender erscheint eine Luftbildvorschau.
+
+OPTIONALE KI-MATERIALIEN
+
+Unter "KI-Anbieter" API-Adresse, Bildmodell und API-Schluessel fuer OpenAI
+oder einen kompatiblen Images-API-Server eintragen. Das kann spaeter geschehen;
+der normale Bau funktioniert ohne diese Angaben. Ein ChatGPT-Login ist nicht
+implementiert. "Verbindung pruefen" fragt die Modellliste ab, erzeugt aber
+kein Bild und bestaetigt noch keine Unterstuetzung des gewaehlten Bildmodells.
+
+"KI-Materialien verwenden" erzeugt bis zu drei generische Bilder fuer Putz,
+Dachziegel und Asphalt. Vorhandene Materialpakete werden aus dem Cache genutzt.
+Es werden nur feste Materialbeschreibungen uebertragen, keine Strassendaten
+oder Ortsfotos. Kosten richten sich nach dem Anbieter. Die Geometrie und die
+registrierte Fotofassade bleiben erhalten. Die Bilder ersetzen keine fehlenden
+Aufnahmen der echten Haeuser.
+
+Schluessel bleiben in web-data/ai-settings.json (Docker: /data/ai-settings.json)
+und werden nicht an die Oberflaeche zurueckgegeben oder ins Strecken-ZIP gepackt.
+Ein Anbieter- oder Zieladresswechsel entfernt den bisherigen Schluessel.
+Die API-Anbindung ist lokal mit simulierten Anbietern geprueft; es wurde kein
+bezahlter Live-API-Test ausgefuehrt und kein Benutzerzugang voreingestellt.
+
+IM SPIEL TESTEN
+
+ZIP in Content Manager ziehen oder den enthaltenen content-Ordner in den
+Assetto-Corsa-Spielordner kopieren. Die Weboberflaeche installiert nichts
+automatisch und aendert keine Lenkradeinstellungen.
+
+1. Assetto Corsa oder Content Manager oeffnen.
+2. Practice / Freies Training waehlen, keine KI-Gegner hinzufuegen.
+3. Den beim Erstellen vergebenen Streckennamen auswaehlen.
+4. Fuer den ersten Test beispielsweise Abarth 500 waehlen.
+5. Starten und im Spiel auf das Lenkrad-Symbol klicken.
+
+Die vollstaendige Teststrecke ist etwa 701 m lang und fuehrt bergauf nach Nordwesten.
+Orange Barrieren markieren die beiden Enden. Nebengassen erhalten kurze
+Asphaltanschluesse bis 8 m, aber keine zusaetzlichen befahrbaren Nebenstrecken.
+Das Referenzprofil hat je nach Stelle 4,4 bis 6,6 m Breite.
+Es basiert auf 31 im 20-cm-Luftbild ueberprueften Querschnitten. Die Mittelachse
+und die Fortsetzung an der Kirchstrasse wurden anhand des Bilds korrigiert.
+Verdeckte Stellen behalten gekennzeichnete OSM-/Schaetzwerte. Das ist eine
+Bildinterpretation, keine vor Ort vermessene Fahrbahn.
+
+Version 0.10.0 verwendet die 20-cm-Luftbilder als Quellen fuer Geometrie und
+Materialverteilung. Den Boden bilden originale CC0-Farbmuster im Massstab
+1,4 m (Gras), 1,5 m (Kies) und 1,25 m (Asphalt). RGBI steuert angenommene
+Mischgewichte und eine grossflaechige Farbvariation; Autos und alte Schatten
+werden nicht mehr als Bodenfarbe auf Boeschungen projiziert. Grass004 und
+Gravel022 sind prozedurale CC0-Materialien, keine Fotos dieser oertlichen Boeden.
+Die Originalfarbbilder bleiben unveraendert; Garten-/Hofmaterialien sind geschaetzt.
+Nahe Haeuser erhalten feineren Putz in acht unabhaengig vom Fensterstil
+gewaehlten Farben, massstaebliche Sockelbaender, Fallrohre,
+unterschiedlich proportionierte Fenster, 3D-Rahmen, Fensterbaenke, teilweise
+Fensterlaeden und Dachrinnen. Eingaenge besitzen Laibungen, Rahmen, Schwellen,
+Beschlaege und synthetische Tuerblaetter. Die Schwellen beruecksichtigen das
+angrenzende Gelaende. Fenster-/Tueratlanten werden als echte Modelltexturen
+exportiert. Schwellen und Sockelanschluesse folgen den tatsaechlich exportierten
+Gelaendedreiecken, statt nur einer davon abweichenden analytischen Hoehenabfrage.
+Baeume erhalten
+verzweigte Staemme, fotografische Rinde und freigestellte fotografische Blaetter.
+Die Kronen hoher Baeume sind breiter und reichen tiefer; kleinere Blattgruppen
+formen eine unregelmaessige Kontur. Der mitgelieferte Fensteratlas zeigt acht
+synthetische Glas-/Vorhangvarianten aus dem eingebauten Bildgenerator. Er ist
+ohne eigene API-Konfiguration nutzbar; Prompt und Herkunft stehen unter
+data/altenhain/materials/AIWindows/. Ein zweiter mitgelieferter Atlas mit acht
+generischen Tuervarianten liegt samt Prompt/Herkunft unter
+data/altenhain/materials/AIDoors/. Beides funktioniert ohne eigenen API-Zugang.
+Es sind keine Fotos der Innenraeume oder Tueren dieser Haeuser.
+Gehwegseiten folgen den OSM-Tags both/left/right/no in der urspruenglichen
+Wegrichtung. Abschnitte ab 7 m erhalten kleinformatiges 20 x 10-cm-Pflaster;
+Breiten folgen nahen Gebaeudekanten bis maximal 2,8 m; laengs sind sie
+sanft abgestuft statt auf den schmalsten Wert einer ganzen Strecke begrenzt.
+Anfaenge und Enden laufen ueber etwa 3 m aus; kleine rueckwaertige
+Einfassungen begrenzen offene Raender. Belagsgrenzen bleiben geschaetzt.
+Rotes Pflaster nahe Haus 39 und
+Asphalt nahe Haus 13 sind durch historische CC0-Fotos von 2012 angeregt,
+keine exakte oder als aktuell bestaetigte Rekonstruktion.
+Segmentierte Betonborde mit Fase, etwa 12 cm sichtbarer Hoehe, abgesenkte
+Enden, zweireihige Steinrinnen und kleine Gussroste geben dem Strassenrand
+Massstab. Hoehen folgen dem Strassenrand statt Gelaendewellen; Standorte
+der Roste und genaue Bord-/Rinnenmasse sind nicht oertlich erfasst.
+Fahrbahn, Schulter, Rinne, Terrainanschluss und aufliegende Reparaturen
+verwenden dasselbe synthetische Dachprofil mit 2,5 % Quergefaelle.
+Bei 6 m Strassenbreite ergibt das etwa 7,5 cm von der Mitte zum Rand.
+Dieses Querprofil ist eine Annahme, keine lokale Vermessung.
+Unregelmaessige Asphaltflicken, schmale vergossene Fugen und Gussdeckel
+folgen exakt den exportierten Fahrbahndreiecken. Es sind illustrative
+Oberflaechendetails, keine dokumentierten Schaeden oder Leitungsanlagen.
+Einzelne weisse Querbalken, Zickzack und Fuehrungsstriche sowie der
+Kirchstrassen-Einmuendungsumriss werden aus dem vorhandenen DOP20
+interpretiert. Quellhash und Pruefbilder dokumentieren die Ablesung.
+Das Befliegungsdatum ist unbekannt; 20-cm-Pixel sind keine Zusage einer
+entsprechenden Lagegenauigkeit. Keine erfundene durchgehende Mittellinie,
+gelbe Dauerlinie oder automatisch uebernommene historische Schulmarkierung.
+Das Gelaende verwendet im 18-m-Nahbereich der Strasse das 1-m-DGM-Raster;
+die Hoehenanpassung ist auf Randstreifen plus 2 m Uebergang begrenzt.
+Gehweg, Gelaende und Hausanschluss verwenden gemeinsame Flaechenkanten,
+Hoehen und Dreiecke. Das Gelaende folgt unter diesen Flaechen dem Plan und
+kehrt in einem kurzen aeusseren Band zum DGM zurueck. Geeignete Hausunterkanten
+werden bis zur angenommenen Gehweghinterkante angeschlossen, kleine
+Hoehenspruenge mit hoechstens zwei flachen Stufen. Unterseiten sind in den
+tatsaechlich exportierten Boden eingebettet. Strasse, Einmuendungen und
+Nachbarhaeuser bleiben frei; grosse Hoehenabweichungen werden verworfen.
+Eine gemeinsame genodete Kantenanordnung mit gebundener Triangulierung
+schliesst benachbarte Gelaendeflaechen. Die 2-mm-Topologiepraezision dient
+der numerisch stabilen Konstruktion und verspricht keine entsprechende
+Geodatengenauigkeit; sichtbare Fahrbahnflaechen bleiben unveraendert.
+Das sind plausible Kulissendetails, keine vermessenen Grundstueckszugaenge.
+Version 0.9 ergaenzt schmale Kiesstreifen bis 45 cm an geeigneten originalen
+LoD2-Wandunterkanten. Hoechstens 45 cm lokaler Abtrag oder 30 cm Auffuellung
+sind erlaubt; oeffentliche Pflasterflaechen, Strassen und Nachbarhaeuser bleiben
+ausgespart. Eine feste aeussere DGM-Hoehe und ein gerader Uebergang ersetzen
+gewellte Rampen hinter Gehwegen. Auch diese Baudetails bleiben Annahmen.
+Version 0.10 ergaenzt geeignete Hanggrundstuecke mit terrassierten Vorplaetzen,
+Stuetzmauern mit Abdecksteinen, Treppen mit Podesten und Handlaeufen sowie
+visuellen Grundstueckszufahrten bei geeigneten Laengs- und Querneigungen.
+Diese schaffen keine befahrbaren Nebenstrecken oder Bordabsenkungen. Gelaende und Bauteile
+verwenden denselben Flaechenplan. Diese Planung ist auch im Browser und
+Docker automatisch aktiv, einschliesslich kleinerer Streckenausschnitte.
+An steilen, mindestens 8 m langen Strassenrandabschnitten nahe Haeusern
+derselben Strassenseite entstehen bis zu drei gestufte Mauern mit schmalen
+Kiesabsaetzen und auslaufenden Enden. Seitliche Fusswege und Treppenanschluesse lassen
+die notwendigen Maueroeffnungen frei. Die angezeigte Maueranzahl zaehlt
+Hausanschlussanlagen und zusammenhaengende Stuetzlaeufe statt einzelner Zellen.
+Die Konstruktionen sind aus Hoehen abgeleitet und nicht oertlich vermessen.
+Optional werden aus DOM1 minus DGM1 ungefaehre Kronenhoehen bis 80 m neben
+der Strasse gewonnen und mit dem RGBI-Luftbild abgeglichen. Baumarten und
+Kronenradien bleiben angenaehert. Ohne DOM1 funktioniert der RGB-Fallback.
+
+Gebaeudeformen stammen aus amtlichen 3D-Daten. Die eine zugeordnete Fotofassade
+an Langstrasse 39 stammt von Karsten Ratzke (CC0, Aufnahme 15.01.2012).
+Die anderen Fassaden und die ergaenzten Fensterlagen bleiben angenaehert.
+Die Strecke ist noch kein vollstaendig fotorealistisches Ortsmodell.
+Kein Google-Bildmaterial enthalten.
+
+Baumzuordnung/-art, Kronenform, Fallback-Hoehen, Gehwege und Asphaltreparaturen sind teilweise
+geschaetzte Details. Baeume, Gebaeude, Gehwege und Bordsteine haben keine
+Kollision. Version 0.7 ergaenzt das angenommene Querprofil zur in Version 0.6
+korrigierten Fahrbahn, ihrer variablen Breite und dem angepassten Gelaende. Aeltere
+Spieltests bestaetigen diese neue Geometrie nicht.
+
+Nur Freies Training verwenden. Zeitangriff ist ohne Fahrlinie nicht nutzbar.
+
+Bitte auf Loecher, harte Kanten, Spruenge und falsche Kollisionen achten.
+Am besten problematische Stellen mit Screenshot oder ungefaehrer Position
+melden. Der historische Bericht physics-smoke.json bestaetigt Bodenkontakt
+aller vier Raeder am Start fuer Version 0.3.0. Er bestaetigt nicht Version 0.11.0
+oder eigene Web-Varianten. Der historische Browsertest mit Abschnittsauswahl,
+Bau, Vorschau und ZIP-Download betraf Version 0.3 (100-400 m, 5,5 m Breite).
+
+Aktuell fuer 0.11.0 geprueft:
+- 58 gezielte Gebaeude-/Sockel- und Audit-Regressionstests bestanden.
+- 261 Geometrie-, KN5- und Paketpruefungen bestanden.
+- 73 Kontakt-/Referenzpruefungen an den exportierten Dreiecken bestanden.
+- 20 unabhaengige Kellerpruefungen am vollstaendigen KN5 bestanden.
+- Browserauftrag 6b97957812b844fa912a91bce0fadd04: 42 HTTP-/Export-,
+  68 Kontakt- und 16 Kellerpruefungen bestanden; zehn vorherige Auftraege
+  erhalten, drei echte Vorschauen und herunterladbares ZIP geprueft.
+- Dockerauftrag 7a0e212b22c04c82bcb7cae2df58fed6, Abschnitt 100-400 m
+  bei Breitenfaktor 5,5/6: 170 HTTP-/Exportpruefungen einschliesslich
+  Kellergeometrie bestanden. Containerbetrieb siehe DOCKER.md.
+- Neue Blender-Ansichten unter test-results/v0.11-*-preview.png;
+  der Nachweis enthaelt Kamerastationen und Pruefsummen.
+- Kein neuer Spieltest und kein Live-KI-Aufruf durchgefuehrt.
+
+Historisch fuer 0.10.0 geprueft:
+- Vollstaendiger Export: 246/246 Geometrie-/KN5-/Paketpruefungen und
+  73/73 Kontakt-/Referenzpruefungen an den exportierten KN5-Dreiecken.
+  Strassenverlauf, Hoehenreferenz und Breitenprofil gegenueber 0.9 unveraendert.
+- 67 Terrassen, 16 Treppen, sechs Zufahrten, zehn seitliche Fusswege und
+  fuenf zusammenhaengende gestufte Stuetzlaeufe. Insgesamt 69 Stuetzanlagen
+  aus 521 einzelnen Mauersegmenten; die neun beobachteten Markierungen bleiben.
+- 65/65 gezielte Hang-, Bauteil- und Gelaendetests bestanden.
+- Neue unveraenderte Blender-Renders des finalen Modells: v0.10-driver-preview.png
+  (176 m), v0.10-junction-preview.png (310 m), v0.10-hillside-stairs-preview.png
+  (460 m), v0.10-entry-preview.png (530 m), v0.10-environment-preview.png (540 m).
+  Dateien und Berichte liegen in test-results/. Keine neuen Spielscreenshots.
+- Vollstaendiger Browserauftrag e694042889674b87aaaed0537f2e2bd5:
+  38/38 HTTP-/Exportpruefungen, 68/68 KN5-Kontaktpruefungen, drei echte
+  1280x720-Vorschauen und bytegleicher ZIP-Download. Alle acht vorherigen Auftraege
+  samt Status erhalten; KI ausgeschaltet. Nachweise: local-web-integration-v010.json,
+  local-web-contacts-v010.json und browser-v010-proof.png unter test-results/.
+- Dockerauftrag e276c724626e4f05a9c9e1fa50f21645, Abschnitt 100-400 m,
+  Breitenfaktor 5,5/6: 145/145 HTTP-/Paketpruefungen und 68/68 echte
+  KN5-Kontaktpruefungen bestanden, einschliesslich drei CPU-Vorschauen und ZIP.
+  Ein schmaler Gelaendeuebertritt an einer Treppe wurde im verdeckten Unterbau
+  behoben und durch eine Regression abgesichert. Sichtbare Stufen und
+  Pruefgrenzen unveraendert. Weitere Betriebsnachweise: DOCKER.md.
+
+Historisch fuer 0.5.0 geprueft, kein 0.11-Nachweis:
+- Hauptstrecke: 133 von 133 Geometrie-/KN5-/Paketpruefungen bestanden
+  (Zusammenfassung: test-results/visual-release-v05.json).
+- API: 13 Tests gegen simulierte lokale Anbieter und 10 Integrationstests
+  bestanden; keine kostenpflichtige Live-Bilderzeugung ueber die konfigurierte API.
+- Echter Docker-/Compose-Auftrag: 34 Pruefungen bestanden, einschliesslich Bau,
+  drei Vorschauen und ZIP-Download (test-results/docker-web-integration-v05.json).
+  Gesunder Dienst und erhaltener Auftrag nach Neustart sind in
+  test-results/docker-runtime-v05.json dokumentiert.
+
+Historisch fuer 0.6.0 geprueft, kein 0.11-Nachweis:
+- Vollstaendiger KN5-Export: 181 von 181 Geometrie-/KN5-/Paketpruefungen
+  bestanden (test-results/visual-release-v06.json); 141 Meshes, neun Marker und
+  183.497.312 Bytes.
+- Alle sechs Tests in scripts/test_visuals.py bestanden, einschliesslich
+  variabler Breitenreferenz, Luftbildkontrollpunkten und korrekt ueber der
+  neuen Fahrbahn platzierter Startpositionen.
+- Zusaetzlich bestanden neun Architektur-, sieben Fassaden-, fuenf Tests der
+  Gelaende-Dreiecksabfrage, sieben Gelaendeanschluss- und acht Kulissentests.
+- Zwei gezielte Routentests bestaetigten den korrigierten numerischen
+  120-m-Grenzfall einschliesslich der Webvalidierung.
+
+Damals gerenderte Bilder: test-results/v0.6-driver-preview.png,
+test-results/v0.6-environment-preview.png und test-results/v0.6-junction-preview.png.
+Die Uebersicht in build/rtac_altenhain_langstrasse/ui/preview.png wurde neu erzeugt.
+
+Der damalige Docker-HTTP-Auftrag fuer 0.6.0 bestand 47 von 47 Pruefungen fuer Bau,
+drei verschiedene Vorschauen, ZIP, variables Breitenprofil und verwendete
+Tuertexturen im KN5 (test-results/docker-web-integration-v06.json).
+Weitere 17 von 17 Laufzeitpruefungen bestanden, einschliesslich Neustart,
+erhaltener Auftraege und schreibgeschuetztem Container-Dateisystem
+(test-results/docker-runtime-v06.json). Dockeradresse: http://127.0.0.1:18765.
+
+Lokaler 0.6-Webexport 63d50da4b280411384e28b40315d6abb: abgeschlossen, rund 701 m,
+509 Gebaeude, 181 von 181 Geometrie-/Paketpruefungen bestanden. ZIP und drei
+Vorschauen stehen im Verlauf unter http://127.0.0.1:8765 bereit.
+
+Historisch fuer Version 0.7.0 geprueft, kein 0.11-Nachweis:
+- Vollstaendiger Export: 197 von 197 Geometrie-/KN5-/Paketpruefungen
+  bestanden (test-results/geometry-v07-before-ground-upgrade.json); 155 Meshes, neun Marker,
+  509 Gebaeude und 172.703.740 Bytes.
+- Alle sechs Tests in scripts/test_visuals.py bestanden; dazu acht
+  Gelaende-, acht Strassenoberflaechen-, sieben Strassenrand- und acht
+  Einmuendungstests sowie der Vegetations-/Freiraum-/Determinismustest.
+- Fuenf von fuenf Vergleichen mit 0.6 bestaetigen unveraenderte Mittelachse,
+  Breitenprofil, Laenge, Lageursprung und Hoehenursprung:
+  test-results/road-v07-alignment-preserved.json.
+- Erzeugt sind 982 Bord-/Rinnenabschnitte, 29 Roste, 277 Gehwegabschnitte
+  in 15 Strecken, zwoelf Deckel, elf Reparaturfelder und 14 versiegelte
+  Fugen. Diese Mengen sind Modellbestand, keine oertliche Erhebung.
+- Neue Fahrer-, Einmuendungs- und Umgebungsansichten:
+  test-results/v0.7-driver-preview.png, v0.7-junction-preview.png und
+  v0.7-environment-preview.png. Uebersicht und gepackte Blender-Quelle
+  sind ebenfalls neu erzeugt.
+- Lokaler Webauftrag b7b835e1be66431e8c29cacb1ac54555 abgeschlossen:
+  11 von 11 HTTP-/Integritaetspruefungen bestanden, einschliesslich ZIP,
+  drei verschiedener Vorschauen und erhaltenem vorherigen Auftrag
+  (test-results/local-web-v07.json). Im Browser kontrollierter Abschluss:
+  test-results/v0.7-web-finished.png.
+- Docker-Auftrag 100-400 m: 65 von 65 HTTP-/Paketpruefungen bestanden;
+  Containerbetrieb: 24 von 24 Pruefungen bestanden, einschliesslich Neustart
+  sowie Erhalt bisheriger Auftraege und aller drei Vorschauen.
+  test-results/docker-web-integration-v07.json, docker-runtime-v07.json.
+Quellen und Annahmen: research/german-streets-v07.md.
+
+Historisch fuer Version 0.8.0 geprueft, kein 0.11-Nachweis:
+- Vollstaendiger Export: 211 von 211 Geometrie-/KN5-/Paketpruefungen bestanden,
+  168 Meshes, neun Marker, 171.186.814 Bytes
+  (test-results/geometry-v08-before-realism-upgrade.json).
+- Direkter Kontaktvergleich an tatsaechlichen KN5-Dreiecken: 22 von 22
+  Pruefungen bestanden (test-results/street-contacts-v08.json). Vollstaendige
+  Gelaendedeckung ohne Durchdringung unter Gehwegen, Hausanschluessen,
+  Rinnen, Fahrbahn und Randstreifen. Gehwegoberseiten liegen 32,2-53,3 mm,
+  Hausanschlussoberseiten 33,6-39,0 mm ueber dem darunterliegenden Gelaende;
+  ihre Unterseiten sind darin eingebettet.
+- Fuenf Referenzvergleiche bestaetigen unveraenderte Mittelachse, Breitenprofil,
+  Laenge sowie Lage- und Hoehenursprung.
+- 16 Gelaendeanschluss-, zwoelf Strassenrand- und 27 Markierungs-/Einmuendungs-/
+  Strassenoberflaechentests bestanden; dazu 14 Tests zu Visualisierung,
+  Gelaendeabfrage und Oberflaechengeometrie.
+- Uebersicht und vier Detailansichten neu gerendert und visuell geprueft:
+  test-results/v0.8-driver-preview.png (176 m), v0.8-junction-preview.png
+  (310 m), v0.8-environment-preview.png (540 m), v0.8-entry-preview.png (16 m).
+  Die Uebersicht liegt in build/rtac_altenhain_langstrasse/ui/preview.png.
+  Die Blender-Quelldatei mit eingepackten Texturen wurde erneuert; das
+  Strecken-ZIP enthaelt die aktuellen Bilder.
+- Lokaler Webauftrag 833f78e18bab46648397f182bb72c3f7 abgeschlossen:
+  700,81 m, neun beobachtete Markierungen, drei HTTP-Vorschauen und zum
+  lokalen Auftragsergebnis byteidentischer ZIP-Download. 15 von 15
+  HTTP-Pruefungen bestanden (test-results/local-web-integration-v08.json),
+  dazu 17 von 17 KN5-Kontaktpruefungen im isolierten Webauftrag
+  (test-results/local-web-contacts-v08.json). Alle fuenf vorherigen
+  Auftraege blieben unter http://127.0.0.1:8765 erhalten.
+- Dockerauftrag fuer 100-400 m abgeschlossen: 71 von 71 HTTP-/Paketpruefungen,
+  17 von 17 KN5-Kontaktpruefungen und 25 von 25 Laufzeitpruefungen bestanden.
+  Sieben Markierungen liegen in diesem Ausschnitt; die zwei Querbalken liegen
+  vor dessen Anfang. Neustart sowie Erhalt der drei alten Auftraege und ihrer
+  Vorschauen sind geprueft; das Datenvolume bleibt erhalten. Dienstadresse:
+  http://127.0.0.1:18765. Einzelheiten und Berichte siehe DOCKER.md.
+
+Historischer Nachweis 0.9: Schwerpunkt waren Gehweg-/Haus-/Gelaendeanschluesse und belegte
+Strassenmarkierungen. 228 von 228 Geometrie-/KN5-/Paketpruefungen bestanden
+(test-results/geometry-v09-before-hillsides.json), ebenso 26 von 26 exakte Kontakt-/Referenzpruefungen
+(test-results/street-contacts-v09.json) und 60 von 60 gezielte Gelaende-,
+Material- und Gebaeudetests (test-results/unit-v09.log). Alle neun beobachteten
+Markierungen sind an den tatsaechlichen KN5-Dreiecken geprueft: zwei Querbalken,
+ein Zickzack und sechs Fuehrungsstriche liegen 1,7945-1,8053 mm ueber Asphalt,
+zeigen nach oben und sind sichtbar exportiert (test-results/marking-visibility-v09.json).
+Eine durchgehende Mittellinie wird nicht erfunden. Fahrer-, Umgebungs-,
+Einmuendungs- und Eingangsansichten sind neu gerendert und visuell geprueft:
+test-results/v0.9-driver-preview.png, v0.9-environment-preview.png,
+v0.9-junction-preview.png und v0.9-entry-preview.png. Die Markierungen sind
+sichtbar; Uebersicht und gepackte Blender-Quelldatei sind erneuert.
+Der vollstaendige lokale Webauftrag 0bceb4c792f04983a01b0fa69f9c20ef bestand
+34 von 34 HTTP-/Exportpruefungen und 21 von 21 KN5-Kontaktpruefungen:
+700,81 m, neun Markierungen, drei echte 1280x720-Vorschauen und ein bytegleich
+herunterladbares ZIP. Alle sechs alten Auftraege samt Status blieben erhalten.
+Berichte: test-results/local-web-integration-v09.json und
+test-results/local-web-contacts-v09.json. Auch der unabhaengige Dockerauftrag
+ff11fcfa20374d82980b351994802b4e fuer 100-400 m bestand 89 von 89 HTTP-/
+Paketpruefungen und 21 von 21 KN5-Kontaktpruefungen, einschliesslich drei
+CPU-gerenderter Vorschauen und eines geprueften ZIP-Downloads. Alle vier
+vorhandenen Dockerauftraege blieben erhalten. Laufzeitnachweise und
+Betriebsdetails stehen in DOCKER.md.
+
+Die in Version 0.9 dokumentierten Hoehenunterschiede um Station 533-544 m
+werden in Version 0.10 an akzeptierten Bauflaechen durch lokale Terrassen und
+Stuetzkonstruktionen aufgefangen. Version 0.11 ergaenzt geeignete offene
+Unterseiten durch Keller- und Sockelhuellen bis maximal sechs Meter Abstand
+zum Exportgelaende. Groessere oder durch Strassen/Nachbarhaeuser belegte
+Luecken werden nicht frei ueberbaut. Die dunkle Unterseite nahe 530 m war
+im historischen Stand 0.10 noch offen; dessen Bilder bleiben erhalten.
+Tatsaechliche Grundstueckszugaenge sind ohne weitere Ortsbelege
+nicht bekannt. Der fruehere Zustand bleibt dokumentiert in
+test-results/ground-limitations-v09.json.
+
+Die Bilder sind Blender-Renderings der tatsaechlichen Exportszene.
+Ein neuer Spieltest wurde auf Wunsch nicht durchgefuehrt; die Testfahrt
+uebernimmt der Nutzer. Vollstaendige Testfahrt und Mehrspielertest bleiben offen.
+
+ERNEUT BAUEN
+
+Das Quellen-ZIP rtac_altenhain_langstrasse-0.11.0-source.zip enthaelt nach Paketbau verwendete
+Geodaten, Fotos, CC0-Materialien, Quellenmanifeste, Docker-Dateien und den
+synthetischen Fenster-/Tueratlanten samt Prompts/Herkunft sowie die dokumentierte
+Luftbild-Straßenreferenz. Nach Installation der
+requirements.txt genuegt bei vollstaendigem Cache: python scripts/build.py
+Zum Materialabruf gehoert jetzt auch scripts/fetch_surface_materials.py.
+Die beiden Poly-Haven-Sammlungen PolyHavenRoofs und vegetation_photos sind
+im Quellen-ZIP enthalten und werden von den Fetch-Skripten noch nicht abgerufen.
+Persoenliche API-Einstellungen, web-data/ und Spiel-Backups sind ausgeschlossen.
+Weitere Bau- und Pruefschritte stehen in README.md.

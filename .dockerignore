@@ -1,0 +1,30 @@
+# Allowlist: source plus the public dataset manifest and template preview.
+# Geographic inputs are fetched and checksum-verified in a separate build stage.
+# User settings, API keys and jobs never enter the image context.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!LICENSE
+!THIRD_PARTY.md
+!roadtoassetto/
+!roadtoassetto/**
+!webapp/
+!webapp/**
+!scripts/
+!scripts/**
+!tracks/
+!tracks/**
+!licenses/
+!licenses/**
+!docker/
+!docker/**
+**/__pycache__/**
+**/*.pyc
+**/*.pyo
+**/.env
+**/.env.*
+**/*secret*
+**/ai-settings.json
+**/ai-cache/**
+**/web-data/**

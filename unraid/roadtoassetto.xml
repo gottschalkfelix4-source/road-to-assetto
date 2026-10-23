@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Container version="2">
+  <Name>roadtoassetto</Name>
+  <Repository>ghcr.io/gottschalkfelix4-source/road-to-assetto:latest</Repository>
+  <Registry>https://github.com/gottschalkfelix4-source/road-to-assetto/pkgs/container/road-to-assetto</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Project>https://github.com/gottschalkfelix4-source/road-to-assetto</Project>
+  <Support>https://github.com/gottschalkfelix4-source/road-to-assetto/issues</Support>
+  <ReadMe>https://github.com/gottschalkfelix4-source/road-to-assetto/blob/main/unraid/README.md</ReadMe>
+  <Overview>Erzeugt Assetto-Corsa-Strecken und gerenderte Vorschauen im Browser. Enthält den Altenhain-Langstraße-Prototyp mit offenen Geodaten, Gebäuden, Geländeanschlüssen und Straßenmarkierungen. Blender rendert auf der CPU; eine GPU und Assetto Corsa auf dem Server sind nicht erforderlich. KI-Materialien sind optional und werden später in der Weboberfläche eingerichtet. Aufträge, ZIPs, Vorschauen und Einstellungen bleiben im Appdata-Ordner erhalten. Für x86-64/amd64.</Overview>
+  <Category>Tools:Utilities</Category>
+  <WebUI>http://[IP]:[PORT:8765]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/gottschalkfelix4-source/road-to-assetto/main/unraid/roadtoassetto.xml</TemplateURL>
+  <Requires>x86-64/amd64. Standardlimit: 4 CPU-Kerne und 8 GiB RAM. Appdata muss für UID 99 / GID 100 schreibbar sein. Anleitung: Projektlink → unraid/README.md.</Requires>
+  <ExtraParams>--user=99:100 --init --restart=unless-stopped --read-only --tmpfs=/tmp:rw,nosuid,size=1g --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=256 --memory=8g --cpus=4 --stop-timeout=40 --add-host=host.docker.internal:host-gateway</ExtraParams>
+  <Config Name="Weboberfläche" Target="8765" Default="8765" Mode="tcp" Description="HTTP-Port am Unraid-Server. Bei einem belegten Port nur den Host-Port ändern; Container-Port 8765 beibehalten." Type="Port" Display="always" Required="true" Mask="false">8765</Config>
+  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/roadtoassetto" Mode="rw" Description="Persistente Aufträge, Strecken-ZIPs, Vorschauen und optionale KI-Einstellungen. Ordner muss für UID 99 / GID 100 schreibbar sein. Geodaten sind bereits im Image enthalten." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/roadtoassetto</Config>
+</Container>

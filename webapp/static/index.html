@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#faf8f5">
+  <title>Road to Assetto</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#track-form">Zu den Streckeneinstellungen</a>
+  <header class="app-header">
+    <a class="wordmark" href="/" aria-label="Road to Assetto – Startseite"><svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><path d="M4 25 11 3h6l7 22M14 5v4m0 4v4m0 4v4" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>Road to Assetto</span></a>
+    <span class="app-purpose">Reale Straßen für Assetto Corsa</span>
+    <button id="open-ai-settings" type="button" class="secondary compact">KI-Anbieter</button>
+    <div class="connection"><span id="connection-state" role="status">Verbinde …</span><button id="retry-connection" class="text-button" type="button" hidden>Erneut versuchen</button></div>
+  </header>
+
+  <main>
+    <div id="global-error" class="global-error" role="alert" hidden></div>
+    <div class="workspace">
+      <section class="map-section" aria-labelledby="region-name">
+        <div class="map-toolbar"><div><h1 id="region-name">Strecke wird geladen …</h1><p id="region-description">Verfügbare Region wird abgerufen.</p></div><button id="fit-map" class="secondary compact" type="button" disabled>Ganze Strecke</button></div>
+        <div class="map-shell" id="map-shell">
+          <svg id="route-map" viewBox="0 0 1000 708" role="img" aria-label="Luftbild mit dem Verlauf der Langstraße. Start und Ziel können auch über die Eingabefelder eingestellt werden.">
+            <title>Luftbild und Streckenverlauf</title>
+            <image id="aerial-image" x="0" y="0" width="1000" height="708" preserveAspectRatio="none"/>
+            <path id="route-base-outline" class="route-base-outline"/>
+            <path id="route-base" class="route-base"/>
+            <path id="route-selected-outline" class="route-selected-outline"/>
+            <path id="route-selected" class="route-selected"/>
+            <g id="start-marker" class="map-marker" aria-hidden="true"><circle class="marker-halo" r="17"/><circle class="marker-start" r="14"/><text y="5" text-anchor="middle">A</text></g>
+            <g id="end-marker" class="map-marker" aria-hidden="true"><circle class="marker-halo" r="17"/><circle class="marker-end" r="14"/><text y="5" text-anchor="middle">B</text></g>
+          </svg>
+          <div id="map-loading" class="map-loading">Luftbild wird geladen …</div>
+          <div class="zoom-controls" aria-label="Kartenvergrößerung"><button id="zoom-in" type="button" aria-label="Karte vergrößern" disabled>+</button><button id="zoom-out" type="button" aria-label="Karte verkleinern" disabled>−</button></div>
+          <div class="map-key"><span class="route-key"></span>Gewählter Abschnitt</div>
+          <div class="scale" aria-hidden="true"><span id="scale-label">100 m</span><span id="scale-line"></span></div>
+          <span class="map-attribution">Luftbild: HVBG Hessen · Open Data</span>
+        </div>
+        <div class="map-bottom"><p id="map-help">Karte ziehen zum Verschieben. Mit + und − vergrößern.</p><span id="selection-distance">—</span></div>
+        <div class="source-note"><strong>Was der Nachbau enthält</strong><p id="source-description">Straßenverlauf, Geländehöhen und Gebäude aus offenen Geodaten. Fassaden und zusätzliche Straßendetails werden nachgebildet.</p><details><summary>Daten und Grenzen des Prototyps</summary><ul id="limitations"></ul></details></div>
+      </section>
+
+      <aside class="settings-panel" aria-label="Streckeneinstellungen">
+        <form id="track-form">
+          <div class="section-heading"><h2>Strecke erstellen</h2><span>Assetto Corsa</span></div>
+          <fieldset id="form-fields" disabled>
+            <label for="track-name">Streckenname</label>
+            <input id="track-name" name="name" type="text" maxlength="60" required autocomplete="off" value="Altenhain – Langstraße">
+
+            <div class="field-heading"><h3>Abschnitt</h3><button id="reset-section" class="text-button" type="button">Gesamte Straße</button></div>
+            <div class="range-field"><div class="range-label"><label for="start-distance"><span class="endpoint-label start-label">A</span>Start</label><div class="number-with-unit"><input id="start-distance" name="start_m" type="number" min="0" max="700" step="1" value="0" required inputmode="numeric"><span>m</span></div></div><input id="start-slider" type="range" min="0" max="700" step="1" value="0" aria-label="Start entlang der Straße"><button id="pick-start" type="button" class="map-pick" aria-pressed="false">Start auf der Karte setzen</button></div>
+            <div class="range-field"><div class="range-label"><label for="end-distance"><span class="endpoint-label end-label">B</span>Ziel</label><div class="number-with-unit"><input id="end-distance" name="end_m" type="number" min="0" max="700" step="1" value="700" required inputmode="numeric"><span>m</span></div></div><input id="end-slider" type="range" min="0" max="700" step="1" value="700" aria-label="Ziel entlang der Straße"><button id="pick-end" type="button" class="map-pick" aria-pressed="false">Ziel auf der Karte setzen</button></div>
+            <p class="field-hint" id="section-hint">Mindestens 120 m für eine fahrbare Teststrecke.</p>
+
+            <div class="field-heading"><h3>Umgebung</h3></div>
+            <label for="road-width">Straßenbreite</label>
+            <div class="select-with-unit"><select id="road-width" name="road_width_m"><option value="4">Schmaler · 67 %</option><option value="4.5">Schmaler · 75 %</option><option value="5">Schmaler · 83 %</option><option value="5.5">Schmaler · 92 %</option><option value="6" selected>Nach Luftbild · 100 %</option></select></div>
+            <p class="field-hint">Wechselnde Breite nach sichtbaren Fahrbahnrändern. In verdeckten Bereichen geschätzt.</p>
+            <label for="scenery-quality">Umgebungsdetails</label>
+            <select id="scenery-quality" name="scenery_quality"><option value="high" selected>Hoch</option><option value="standard">Standard</option></select>
+            <div class="vegetation-label"><label for="vegetation-density">Vegetation</label><output id="vegetation-value" for="vegetation-density">60 %</output></div>
+            <input id="vegetation-density" name="vegetation_density" type="range" min="0" max="1" step="0.1" value="0.6">
+            <p class="field-hint">Zusätzliche Details sind plausibel platziert; sie entsprechen nicht überall dem Original.</p>
+            <div class="ai-option"><label for="ai-materials"><input id="ai-materials" type="checkbox"> KI-Materialien verwenden</label><p class="field-hint">Erzeugt Varianten für Putz, Dachziegel und Asphalt. Bis zu drei Bilder pro neuem Materialpaket; vorhandene Pakete werden wiederverwendet. Je nach Anbieter fallen Kosten an.</p><button type="button" id="configure-ai" class="text-button">Anbieter einrichten</button></div>
+          </fieldset>
+          <p id="form-error" class="form-error" role="alert" hidden></p>
+          <button id="generate-button" class="primary" type="submit" disabled>Strecke generieren <span aria-hidden="true">→</span></button>
+          <p class="export-note">Lokaler Export · KI optional · ZIP für Content Manager</p>
+        </form>
+      </aside>
+    </div>
+
+    <section class="results-section" aria-labelledby="results-title">
+      <div class="results-heading"><h2 id="results-title">Deine Strecken</h2><span id="jobs-count">Noch keine Exporte</span></div>
+      <div class="results-layout">
+        <div id="job-list" class="job-list"><p class="empty-state">Deine erzeugten Strecken erscheinen hier. Wähle oben einen Abschnitt und starte den Export.</p></div>
+        <section id="job-detail" class="job-detail" aria-label="Gewählter Export" hidden>
+          <div class="job-detail-heading"><h3 id="job-name"></h3><span id="job-state"></span></div>
+          <div id="job-progress-block"><p id="job-stage" role="status" aria-live="polite"></p><progress id="job-progress" max="100" value="0" aria-label="Fortschritt der Generierung"></progress><div class="progress-caption"><span id="job-progress-text">0 %</span><span>Die Seite kann geöffnet bleiben.</span></div></div>
+          <p id="job-error" class="form-error" hidden></p>
+          <div id="job-success" hidden><div class="preview-gallery"><nav id="preview-views" aria-label="Vorschauansicht"></nav><a id="preview-open" target="_blank" rel="noopener"><img id="job-preview" alt="Gerenderte Vorschau der erzeugten Strecke" hidden></a><p>Ansichten aus dem exportierten 3D-Modell. Zum Vergrößern anklicken.</p></div><div class="finished-layout"><div><p id="job-summary"></p><a id="job-download" class="primary download-button" download>Strecke herunterladen <span aria-hidden="true">↓</span></a><p class="install-help">ZIP in Content Manager ziehen und installieren. Danach unter <strong>Training / Practice</strong> auswählen.</p></div></div></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <dialog id="ai-dialog" aria-labelledby="ai-dialog-title">
+    <form id="ai-settings-form">
+      <div class="dialog-heading"><h2 id="ai-dialog-title">KI-Anbieter einrichten</h2><button id="close-ai-settings" class="text-button" type="button" aria-label="KI-Einstellungen schließen">Schließen</button></div>
+      <p class="dialog-intro">Wähle einen Bildgenerator. Die Verbindung wird erst beim Prüfen oder bei einem Export mit KI verwendet.</p>
+      <label for="ai-provider">Anbieter</label><select id="ai-provider"><option value="openai">OpenAI</option><option value="compatible">Andere OpenAI-kompatible Bild-API</option></select>
+      <label for="ai-base-url">API-Adresse</label><input id="ai-base-url" type="url" required placeholder="https://dein-anbieter.example/v1" autocomplete="off">
+      <p class="field-hint">Auch lokale Bildserver sind möglich, wenn sie die Images-API unterstützen.</p>
+      <label for="ai-model">Bildmodell</label><input id="ai-model" type="text" list="ai-models" maxlength="200" placeholder="Modellname deines Anbieters" autocomplete="off"><datalist id="ai-models"></datalist>
+      <label for="ai-key">API-Schlüssel</label><input id="ai-key" type="password" autocomplete="new-password" placeholder="Leer lassen, um gespeicherten Schlüssel zu behalten">
+      <p id="ai-key-state" class="field-hint"></p>
+      <label class="checkbox-label" for="ai-clear-key"><input id="ai-clear-key" type="checkbox"> Gespeicherten Schlüssel entfernen</label>
+      <p class="field-hint">Der Schlüssel bleibt auf dem Server und wird nicht in Streckenpakete oder im Browser gespeichert. Bei einem Anbieterwechsel wird der bisherige Schlüssel entfernt.</p>
+      <div class="dialog-actions"><button id="ai-save" class="primary" type="submit">Speichern</button><button id="ai-test" class="secondary" type="button">Verbindung prüfen</button></div>
+      <p id="ai-settings-status" role="status" aria-live="polite"></p>
+      <details class="ai-explanation"><summary>Was die KI verbessert</summary><p>Sie erzeugt generische Oberflächenmaterialien. Die Fahrbahn und Gebäudeformen kommen weiterhin aus Geodaten. KI-Materialien rekonstruieren keine unbekannten Originalfassaden.</p></details>
+      <details class="ai-explanation"><summary>ChatGPT-Anmeldung</summary><p>Der offizielle ChatGPT-Login benötigt eine registrierte Anwendung und gilt für unterstützte KI-Anfragen. Diese Version verwendet deine frei wählbare Bild-API. <a href="https://developers.openai.com/siwc" target="_blank" rel="noopener">Offizielle Dokumentation</a></p></details>
+    </form>
+  </dialog>
+  <footer><span>Road to Assetto · lokaler Prototyp</span><span>Offene Geodaten. Keine Google-Street-View-Texturen.</span></footer>
+</body>
+</html>

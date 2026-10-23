@@ -1,0 +1,30 @@
+services:
+  roadtoassetto:
+    build:
+      context: .
+    image: ghcr.io/gottschalkfelix4-source/road-to-assetto:latest
+    platform: linux/amd64
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${ROADTOASSETTO_BIND_IP:-127.0.0.1}:${ROADTOASSETTO_PORT:-8766}:8765"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - roadtoassetto-data:/data
+    environment:
+      ROADTOASSETTO_DATA_DIR: /data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=1g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 8g
+    cpus: 4.0
+    stop_grace_period: 40s
+
+volumes:
+  roadtoassetto-data:
