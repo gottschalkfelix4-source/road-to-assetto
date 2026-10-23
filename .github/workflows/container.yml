@@ -1,0 +1,77 @@
+name: Container image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Validate dataset extraction
+        run: python -m unittest discover -s docker -p 'test_*.py' -v
+      - uses: docker/setup-buildx-action@v4
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-
+      - name: Build for validation
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: roadtoassetto:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Check bundled data and Unraid user
+        run: bash docker/smoke_test.sh roadtoassetto:ci
+      - name: Test generator and local AI contracts
+        run: |
+          docker run --rm --tmpfs /app/test-results:rw,mode=1777 --entrypoint python roadtoassetto:ci -B -m unittest \
+            scripts.test_building_bases scripts.test_building_bases_audit \
+            scripts.test_buildings_details scripts.test_buildings_photoreal \
+            scripts.test_buildings_v06 scripts.test_buildings_v09 scripts.test_german_streets \
+            scripts.test_ground_details scripts.test_hillside_banks scripts.test_hillside_render \
+            scripts.test_junction_mouths scripts.test_photo_projection scripts.test_road_markings \
+            scripts.test_road_wear scripts.test_terrain_sampling scripts.test_ai scripts.test_ai_integration
+      - name: Registry login
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish validated image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
