@@ -169,6 +169,22 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.call('/api/jobs/'+first['id']+'/download')[0],404)
         self.assertEqual(json.loads(self.call('/api/jobs/'+first['id'])[2])['name'],'Test <0>')
 
+    def test_large_legacy_history_keeps_geometry_out_of_poll_responses(self):
+        job=json.loads(self.call('/api/jobs',{'template_id':'altenhain','name':'Legacy export'})[2])
+        summary={'length_m':150,'buildings':4,'preview_kind':'render','preview_views':['overview','driver'],
+                 'building_base_records':[{'vertices':[1,2,3]*1000}]*100,
+                 'source_route':{'id':'a'*32,'warnings':['DOM1 unavailable'],'context_key':'private-cache-detail'}}
+        self.server.manager._update(job['id'],status='succeeded',summary=json.dumps(summary))
+        raw=self.call('/api/jobs')[2]
+        self.assertLess(len(raw),5000)
+        public=json.loads(raw)['jobs'][0]
+        self.assertEqual(public['summary']['buildings'],4)
+        self.assertEqual(public['summary']['source_route']['warnings'],['DOM1 unavailable'])
+        self.assertNotIn('building_base_records',public['summary'])
+        self.assertIn('driver',public['preview_urls'])
+        stored=self.server.manager.db.execute('SELECT summary FROM jobs WHERE id=?',(job['id'],)).fetchone()[0]
+        self.assertIn('building_base_records',json.loads(stored))
+
     def test_worker_ownership_lock(self):
         with self.assertRaises(RuntimeError):
             JobManager(self.temp.name,start_worker=False)

@@ -12,6 +12,7 @@ from roadtoassetto.prepare import prepare
 from roadtoassetto.kn5 import write
 from roadtoassetto.package import package,archive
 from scripts.validate import validate
+from webapp.geodata import GeoService,GeoError
 
 def write_progress(folder,stage,percent):
     temp=folder/'progress.tmp'
@@ -27,37 +28,48 @@ def write_progress(folder,stage,percent):
 
 
 def run(folder):
-    request=validate_request(json.loads((folder/'request.json').read_text(encoding='utf-8')))
+    geo=GeoService(folder.parent)
+    request=validate_request(json.loads((folder/'request.json').read_text(encoding='utf-8')),data_root=folder.parent,geo_service=geo)
     def progress(stage,percent):
         write_progress(folder,stage,percent)
     progress('Gelände und Gebäude vorbereiten',5)
     cfg=config();source=ROOT/cfg['data_dir'];data=folder/cfg['data_dir']
     data.mkdir(parents=True,exist_ok=True)
-    for name in ('road_ways.json','road_alignment.json','marking_observations.json','junction_observations.json','bounds.json','area.osm','dgm1.tif','dom1.tif','dom1_source.json','ortho.tif','buildings_lod2.gml','facade_overrides.json','visual_sources.json','retrieval.json'):
-        if (source/name).is_file():
-            shutil.copy2(source/name,data/name)
+    route=None
+    if request['template_id']=='hessen':
+        route=geo.get_route(request['route_id'])
+        provenance=geo.prepare_route(route['id'],data,progress=lambda stage,percent:progress(stage,5+round(float(percent)*.1)))
+        route['warnings']=provenance['warnings']
+        cfg.update(city='Hessen',road_name=route['name'],
+                   geotags=[str(v) for v in route['coordinates'][0]],
+                   source_route={k:route[k] for k in ('id','name','length_m','coordinates','bounds','source','warnings') if k in route})
+        cfg['source_route']['sources']=provenance['sources']
+    else:
+        for name in ('road_ways.json','road_alignment.json','marking_observations.json','junction_observations.json','bounds.json','area.osm','dgm1.tif','dom1.tif','dom1_source.json','ortho.tif','buildings_lod2.gml','facade_overrides.json','visual_sources.json','retrieval.json'):
+            if (source/name).is_file():
+                shutil.copy2(source/name,data/name)
     for asset in ('PaintedPlaster006','surface_photos','PolyHavenRoofs','vegetation_photos'):
         shutil.copytree(source/'materials'/asset,data/'materials'/asset)
     if (source/'materials/AIWindows').is_dir():
         shutil.copytree(source/'materials/AIWindows',data/'materials/AIWindows')
     if (source/'materials/AIDoors').is_dir():
         shutil.copytree(source/'materials/AIDoors',data/'materials/AIDoors')
-    if (source/'photos').exists():
+    if route is None and (source/'photos').exists():
         shutil.copytree(source/'photos',data/'photos')
     cfg.update(id='rtac_'+folder.name,name=request['name'],road_width_m=request['road_width_m'],
                route_start_m=request['start_m'],route_end_m=request['end_m'],
                scenery_quality=request['scenery_quality'],vegetation_density=request['vegetation_density'])
-    cfg['allow_outside_photo_overrides']=True
+    cfg['allow_outside_photo_overrides']=route is None
     ai_run=None
     if request['ai_materials']:
         from webapp.ai import generate_material_pack
-        progress('KI-Materialien erzeugen oder aus Cache laden',8)
+        progress('KI-Materialien erzeugen oder aus Cache laden',16)
         ai_run=generate_material_pack(folder.parent,data/'materials/ai',
-            progress=lambda stage,percent:progress(stage,8+round(percent*.1)))
+            progress=lambda stage,percent:progress(stage,16+round(percent*.04)))
         cfg['ai_materials']=True
     (folder/'tracks').mkdir()
     (folder/'tracks/altenhain.json').write_text(json.dumps(cfg,ensure_ascii=False,indent=2),encoding='utf-8')
-    progress('Straße, Häuser mit Kellerhüllen und Hanganschlüsse bauen',20)
+    progress('Straße, Häuser mit Kellerhüllen und Hanganschlüsse bauen',22)
     scene=prepare(folder,cfg)
     progress('Assetto-Corsa-Modell erstellen',55)
     track=package(folder,cfg,scene)
@@ -118,6 +130,11 @@ if __name__=='__main__':
     from webapp.ai import AIError
     try:
         run(folder)
-    except AIError as error:
-        (folder/'error.json').write_text(json.dumps({'error':error.message,'code':error.code}),encoding='utf-8')
+    except (AIError,GeoError) as error:
+        (folder/'error.json').write_text(json.dumps({'error':getattr(error,'message',str(error)),'code':error.code}),encoding='utf-8')
+        raise SystemExit(1)
+    except ValueError as error:
+        # Geometry diagnostics are safe, actionable errors; paths/provider
+        # bodies are never inserted into these validation messages.
+        (folder/'error.json').write_text(json.dumps({'error':'Die gewählte Strecke konnte nicht sicher aufgebaut werden: '+str(error)[:250],'code':'geometry_validation'}),encoding='utf-8')
         raise SystemExit(1)

@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from webapp.catalog import ROOT,validate_request
+from webapp.geodata import GeoService
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -41,9 +42,10 @@ def terminate_builder(process):
         process.wait(timeout=5)
 
 class JobManager:
-    def __init__(self,data_root=None,start_worker=True):
+    def __init__(self,data_root=None,start_worker=True,geo_service=None):
         self.root=Path(data_root or ROOT/'web-data').resolve()
         self.root.mkdir(parents=True,exist_ok=True)
+        self.geo=geo_service if geo_service is not None else GeoService(self.root)
         self.lock=threading.RLock()
         self.stop=threading.Event()
         self.wake=threading.Event()
@@ -86,14 +88,29 @@ class JobManager:
     def _public(self,row):
         request=json.loads(row['request'])
         ready=row['status']=='succeeded'
+        stored=json.loads(row['summary']) if row['summary'] else None
+        # Older exports contain megabytes of per-building geometry here.
+        # Poll only display data; complete evidence remains in each ZIP.
+        summary=None
+        if stored:
+            keys=('id','name','version','length_m','buildings','elevation_gain_m',
+                  'elevation_min_m','elevation_max_m','hillside_retaining_assemblies',
+                  'hillside_staircases','hillside_driveways','preview_kind','preview_views')
+            summary={key:stored[key] for key in keys if key in stored}
+            if isinstance(stored.get('ai_materials'),dict):
+                summary['ai_materials']={'enabled':stored['ai_materials'].get('enabled',False)}
+            if isinstance(stored.get('ai_generation'),dict):
+                summary['ai_generation']={k:v for k,v in stored['ai_generation'].items() if k in ('cache_hit','usage')}
+            if isinstance(stored.get('source_route'),dict):
+                summary['source_route']={k:v for k,v in stored['source_route'].items() if k in ('id','name','length_m','source','warnings')}
         return {'id':row['id'],'name':request['name'],'created_at':row['created_at'],
                 'status':row['status'],'stage':row['stage'],'progress':row['progress'],
                 'error':row['error'],'settings':request,
-                'summary':json.loads(row['summary']) if row['summary'] else None,
+                'summary':summary,
                 'download_url':f'/api/jobs/{row["id"]}/download' if ready else None,
                 'preview_url':f'/api/jobs/{row["id"]}/preview.png' if ready else None,
                 'preview_urls':({view:f'/api/jobs/{row["id"]}/'+('preview' if view=='overview' else view)+'.png'
-                                 for view in json.loads(row['summary']).get('preview_views',['overview'])}
+                                 for view in stored.get('preview_views',['overview']) if view in ('overview','driver','environment')}
                                 if ready and row['summary'] else {})}
 
     def list(self):
@@ -106,7 +123,7 @@ class JobManager:
             return self._public(row) if row else None
 
     def create(self,value):
-        request=validate_request(value)
+        request=validate_request(value,data_root=self.root,geo_service=self.geo)
         with self.lock:
             pending=self.db.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]
             if pending>=5:
@@ -151,7 +168,8 @@ class JobManager:
                         if self.stop.wait(.5):
                             terminate_builder(self.process)
                             raise RuntimeError('Dienst beendet.')
-                        timeout=1200 if json.loads(row['request']).get('ai_materials') else 900
+                        settings=json.loads(row['request'])
+                        timeout=1800 if settings.get('template_id')=='hessen' else (1200 if settings.get('ai_materials') else 900)
                         if time.monotonic()-began>timeout:
                             terminate_builder(self.process)
                             raise RuntimeError('Der Bau hat das Zeitlimit überschritten.')

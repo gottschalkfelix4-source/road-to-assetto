@@ -254,8 +254,18 @@ gaps greater than six metres are rejected. Plans and provenance are saved in
 Assetto Corsa material interfaces were checked against the locally installed SDK.
 No proprietary Kunos shader binaries, disassembly, textures or models are included
 in either archive; the track refers to standard shader names supplied by the game.
-The local web UI reads the cached Hessian aerial extract rather than loading
-third-party web map tiles. Its HTTP server uses Python's standard library;
+The web UI uses Leaflet 1.9.4 (BSD-2-Clause), vendored from the official
+distribution with its license at `webapp/static/vendor/leaflet/LICENSE`.
+https://leafletjs.com/ and https://github.com/Leaflet/Leaflet/tree/v1.9.4
+It displays OpenStreetMap tiles with visible attribution and normal browser
+caching. The prepared Altenhain aerial image remains an optional layer.
+Explicit address searches use Nominatim; bounded road/context requests use
+Overpass. Their caches and the Hessian DGM1/DOP20/LoD2/DOM1 downloads remain
+server-side. New route exports include the relevant OSM extract, route IDs,
+source licenses, acquisition dates and hashes in `provenance/`.
+https://operations.osmfoundation.org/policies/tiles/
+https://operations.osmfoundation.org/policies/nominatim/
+The HTTP server uses Python's standard library;
 the frontend is served as local static HTML, CSS and JavaScript. Provider
 requests use the existing `requests` dependency. API settings and runtime image
 caches remain in `web-data/`, or the persistent `/data` volume under Docker.

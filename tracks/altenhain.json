@@ -10,7 +10,7 @@
   "sample_spacing_m": 1.0,
   "terrain_spacing_m": 4.0,
   "pitboxes": 4,
-  "version": "0.11.0",
+  "version": "0.12.0",
   "road_crossfall": 0.025,
   "scenery_quality": "high",
   "vegetation_density": 0.65,

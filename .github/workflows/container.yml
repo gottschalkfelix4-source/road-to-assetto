@@ -48,7 +48,7 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Check bundled data and Unraid user
         run: bash docker/smoke_test.sh roadtoassetto:ci
-      - name: Test generator and local AI contracts
+      - name: Test generator, map service and local AI contracts
         run: |
           docker run --rm --tmpfs /app/test-results:rw,mode=1777 --entrypoint python roadtoassetto:ci -B -m unittest \
             scripts.test_building_bases scripts.test_building_bases_audit \
@@ -56,7 +56,8 @@ jobs:
             scripts.test_buildings_v06 scripts.test_buildings_v09 scripts.test_german_streets \
             scripts.test_ground_details scripts.test_hillside_banks scripts.test_hillside_render \
             scripts.test_junction_mouths scripts.test_photo_projection scripts.test_road_markings \
-            scripts.test_road_wear scripts.test_terrain_sampling scripts.test_ai scripts.test_ai_integration
+            scripts.test_road_wear scripts.test_terrain_sampling scripts.test_ai scripts.test_ai_integration \
+            scripts.test_web scripts.test_map_service scripts.test_geodata scripts.test_package
       - name: Registry login
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v4

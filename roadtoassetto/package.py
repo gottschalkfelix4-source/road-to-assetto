@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import hashlib
 import json
 import shutil
 import zipfile
@@ -7,11 +8,61 @@ from PIL import Image, ImageDraw
 import numpy as np
 
 
+def route_provenance(root, config, metadata, track):
+    """Ship the route's small source records, never the surrounding job/cache."""
+    route = metadata.get('source_route') or config.get('source_route')
+    if not route:
+        return None
+    source = (root / config['data_dir']).resolve()
+    names = ('area.osm', 'road_ways.json', 'bounds.json', 'retrieval.json')
+    for name in names:
+        path = source / name
+        if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(source):
+            raise ValueError('New route provenance is missing or unsafe: ' + name)
+    record = json.loads((source / 'retrieval.json').read_text(encoding='utf-8'))
+    # A fixed schema prevents a future internal cache path or provider diagnostic
+    # from silently becoming part of a friend's exported track.
+    source_fields = ('provider', 'license', 'url', 'coverage_id', 'bounds', 'crs',
+                     'resolution_m', 'width', 'height', 'bytes', 'sha256',
+                     'recorded_at_utc', 'building_count', 'pages')
+    retrieval = {key: record[key] for key in ('recorded_at_utc', 'route_id', 'warnings') if key in record}
+    retrieval['sources'] = {
+        kind: {key: value[key] for key in source_fields if key in value}
+        for kind, value in record.get('sources', {}).items()
+        if kind in ('dgm1', 'dop20', 'lod2', 'dom1') and isinstance(value, dict)}
+    retrieval['osm'] = {key: record.get('osm', {})[key]
+                        for key in ('provider', 'license', 'url', 'source_way_ids')
+                        if key in record.get('osm', {})}
+    public_route = {key: route[key] for key in ('id', 'name', 'length_m', 'coordinates',
+                    'bounds', 'source', 'warnings') if key in route}
+    public_route['sources'] = retrieval['sources']
+    public_route['source_way_ids'] = retrieval['osm'].get('source_way_ids', [])
+    public_route['retrieved_at_utc'] = retrieval.get('recorded_at_utc')
+    destination = track / 'provenance'
+    destination.mkdir(exist_ok=True)
+    for name in names[:-1]:
+        shutil.copy2(source / name, destination / name)
+    for name, value in (('retrieval.json', retrieval), ('route.json', public_route)):
+        (destination / name).write_text(json.dumps(value, ensure_ascii=False,
+                                                  allow_nan=False, indent=2), encoding='utf-8')
+    files = {}
+    for path in sorted(destination.iterdir()):
+        if path.is_file():
+            with path.open('rb') as stream:
+                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            files['provenance/' + path.name] = {'bytes': path.stat().st_size, 'sha256': digest}
+    metadata['source_route'] = public_route
+    metadata['provenance_files'] = files
+    return retrieval
+
+
 def package(root, config, scene):
     track=root/'build'/config['id']
     for folder in ('data','ui'):
         (track/folder).mkdir(parents=True,exist_ok=True)
-    meta=scene['metadata']
+    meta=dict(scene['metadata'])
+    retrieval=route_provenance(root,config,meta,track)
+    new_route=retrieval is not None
     surfaces=[]
     # The v0.7 edge strip is paved rather than loose gravel. Friction remains
     # a prototype estimate, not an independently measured local tyre surface.
@@ -40,7 +91,7 @@ VIBRATION_LENGTH=0
     (track/'data/groove.ini').write_text('[HEADER]\nGROOVES_NUMBER=0\n',encoding='utf-8')
     rise=meta['elevation_max_m']-meta['elevation_min_m']
     ui={'name':config['name'],'description':f'{config["city"]}. {meta["length_m"]:.0f} m mit rund {rise:.0f} m Hoehenunterschied. Prototyp fuer freies Training.',
-        'tags':['real road','prototype','point to point','Germany'], 'geotags':['50.1588','8.4680'],
+        'tags':['real road','prototype','point to point','Germany'], 'geotags':config.get('geotags',['50.1588','8.4680']),
         'country':config['country'],'city':config['city'],'length':str(round(meta['length_m'])),
         'width':str(config['road_width_m']),'pitboxes':str(config['pitboxes']),'run':'practice',
         'author':'Road to Assetto - private prototype','version':config['version']}
@@ -64,16 +115,24 @@ VIBRATION_LENGTH=0
     outline.alpha_composite(image,((512-image.width)//2,(512-image.height)//2))
     outline.save(track/'ui/outline.png')
     (track/'data/map.ini').write_text(f'[PARAMETERS]\nWIDTH={width}\nHEIGHT={height}\nMARGIN=20\nSCALE_FACTOR=1\nMAX_SIZE=2048\nX_OFFSET={-lo[0]:.5f}\nZ_OFFSET={-lo[1]:.5f}\nDRAWING_SIZE=5\n',encoding='utf-8')
-    credits='''Road to Assetto - Altenhain Langstrasse prototype
+    source_notice=('OSM extract, route way IDs, geographic bounds and retrieval provenance are included\n'
+                   'in this track under provenance/; see prototype_manifest.json for file hashes.'
+                   if new_route else 'OSM extracts and route way IDs are included in the source package.')
+    retrieval_notice=(f'Data retrieval recorded at {retrieval.get("recorded_at_utc", "an unspecified time")}.\n'
+                      'See provenance/retrieval.json for the sources actually used; DOM1 is optional.'
+                      if new_route else 'Data retrieved from inspire-hessen.de via WCS and WFS on 2026-10-21.')
+    base_notice=('Basement planning records are included in prototype_manifest.json.' if new_route else
+                 'The source archive includes the building_bases.json plan and independent exported-geometry checks.')
+    credits=f'''Road to Assetto - {config['name']} prototype
 
 Road centerline: (c) OpenStreetMap contributors
 https://www.openstreetmap.org/copyright - ODbL 1.0
-OSM extracts and route way IDs are included in the source package.
+{source_notice}
 
 Terrain DGM1 / surface model DOM1 / aerial imagery DOP20 / buildings LoD2: Hessische Verwaltung fuer Bodenmanagement
 und Geoinformation (HVBG), https://hvbg.hessen.de/geoinformation/open-data
 Datenlizenz Deutschland - Zero - Version 2.0.
-Data retrieved from inspire-hessen.de via WCS and WFS on 2026-10-21.
+{retrieval_notice}
 
 The road surface has been smoothed and road width is estimated.
 This is not a laser-scanned or survey-accurate road model.
@@ -96,7 +155,9 @@ https://polyhaven.com/a/grey_roof_01
 https://polyhaven.com/a/tree_small_02
 https://polyhaven.com/a/tree_bark_03
 https://polyhaven.com/license
-Detailed asset provenance and file hashes are included in the source package.
+Material provenance is recorded in prototype_manifest.json. Original material
+sources and hashes are also available in the project's versioned dataset:
+https://github.com/gottschalkfelix4-source/road-to-assetto/blob/main/docker/dataset.json
 Where available, tree height and canopy locations use DOM1 minus DGM1 and aerial
 vegetation checks; species and individual crown shapes remain approximate.
 Vegetation, pavement, repairs and architectural details are estimated scenery,
@@ -105,8 +166,7 @@ No Google Street View, Google Maps or Google Earth assets are included.
 Basement and plinth shells are inferred between original LoD2 lower exterior
 edges and the exported terrain. Existing source ground faces supply separate
 underside closures. These are visual additions, not surveyed basement layouts;
-original wall/roof coordinates stay unchanged. The source archive includes the
-building_bases.json plan and independent exported-geometry checks.
+original wall/roof coordinates stay unchanged. {base_notice}
 
 Static KN5 binary layout reference:
 KinG-InFeT/blender-assetto-corsa-track-generator (Apache-2.0).
@@ -115,19 +175,23 @@ See THIRD_PARTY.md in the source project.
     for photo in meta.get('photo_sources',[]):
         credits+=f'\nFacade photo {photo["building_id"]}/{photo["surface_id"]}: {photo["source"]}; license: {photo["license"]}\n'
     if meta.get('window_texture_source'):
-        credits+='\nWindow interior atlas: AI-generated generic artwork using built-in OpenAI ImageGen on 2026-10-21. Not photographs of these houses. Prompt and source hash included in source package.\n'
+        credits+='\nWindow interior atlas: AI-generated generic artwork using built-in OpenAI ImageGen on 2026-10-21. Not photographs of these houses. Source hash is recorded in prototype_manifest.json; the original prompt is in the versioned material dataset.\n'
     if meta.get('door_texture_source'):
-        credits+='\nDoor leaf atlas: AI-generated generic artwork using built-in OpenAI ImageGen on 2026-10-21. Not photographs of these houses. Original atlas, prompt and source hash included in source package.\n'
+        credits+='\nDoor leaf atlas: AI-generated generic artwork using built-in OpenAI ImageGen on 2026-10-21. Not photographs of these houses. Source hash is recorded in prototype_manifest.json; the original atlas and prompt are in the versioned material dataset.\n'
     if meta.get('road_alignment',{}).get('applied'):
         credits+='\nRoad centreline and changing widths manually interpreted from DOP20; OSM retained in obscured sections. Local edge uncertainty is approximately 0.5-0.8 m and 1.5 m at the reviewed junction, not survey accuracy. Reference control points are included in road_alignment.json in the source package.\n'
     if meta.get('road_crossfall'):
-        credits+=f'\nGerman street construction details: inferred kerbs, drainage strips, pavement modules, gullies, manholes and asphalt repairs. Sidewalk sides follow OSM tags; selected pavement materials reference historical local photographs. The {100*meta["road_crossfall"]["slope"]:g} percent drainage crown is a typical construction assumption, not a local measurement. Short side-street asphalt mouths are visual scenery, not additional driving routes. See research/german-streets-v07.md and prototype_manifest.json for evidence and limitations.\n'
+        pavement_notice=('Pavement materials are generic inferred scenery, not photographic records of this street.' if new_route else
+                         'Selected pavement materials reference historical local photographs; see research/german-streets-v07.md in the source project.')
+        credits+=f'\nGerman street construction details: inferred kerbs, drainage strips, pavement modules, gullies, manholes and asphalt repairs. Sidewalk sides follow OSM tags. {pavement_notice} The {100*meta["road_crossfall"]["slope"]:g} percent drainage crown is a typical construction assumption, not a local measurement. Short side-street asphalt mouths are visual scenery, not additional driving routes. See prototype_manifest.json for evidence and limitations.\n'
     if meta.get('road_marking_source'):
         credits+='\nIndividual white markings were traced from visible HVBG DOP20 aerial imagery. Positions, paint widths and wear are approximate; the raster acquisition date is unknown. No continuous centreline is inferred. Original observations and uncertainty are in marking_observations.json; visual evidence in research/markings-v08/.\n'
     if meta.get('street_ground_contact_sections',0) or meta.get('ground_transition_accuracy'):
         credits+='\nSidewalk, house-front paving and their immediate ground tie-ins share planned heights. Frontage extents, joints and edging are inferred from road and LoD2 building geometry, not cadastral or surveyed construction detail. See prototype_manifest.json.\n'
     if meta.get('hillside_provenance'):
-        credits+='\nHillside terraces, retaining walls, stepped gravel banks, stairs, footpaths and suitable driveways are inferred from source heights. They share a terrain-construction plan but are not surveyed property boundaries or observed access arrangements. Masonry, coping and handrail materials are original procedural assets; gravel uses the existing attributed CC0 material. New construction details are visual scenery, not separate collision objects. See hillside_plan.json in the source package and prototype_manifest.json.\n'
+        hillside_notice=('See prototype_manifest.json for planning records.' if new_route else
+                         'See hillside_plan.json in the source package and prototype_manifest.json.')
+        credits+='\nHillside terraces, retaining walls, stepped gravel banks, stairs, footpaths and suitable driveways are inferred from source heights. They share a terrain-construction plan but are not surveyed property boundaries or observed access arrangements. Masonry, coping and handrail materials are original procedural assets; gravel uses the existing attributed CC0 material. New construction details are visual scenery, not separate collision objects. '+hillside_notice+'\n'
     if meta.get('ai_materials',{}).get('enabled'):
         credits+='\nOptional AI material pack applied: synthetic plaster, red roof tiles and asphalt. Generated using the user-configured image provider; provider terms apply. Provenance is recorded in prototype_manifest.json. Not survey or facade photographs.\n'
     (track/'CREDITS.txt').write_text(credits,encoding='utf-8')

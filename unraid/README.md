@@ -1,9 +1,10 @@
 # Road to Assetto auf Unraid
 
-Die Vorlage startet den Browser-Generator mit dem vorbereiteten
-**Altenhain–Langstraße-Datensatz**. Das Image enthält Blender, Geodaten und
-Materialien. Ein zusätzlicher Daten-Download oder Quellcode-Checkout auf Unraid
-ist nicht nötig. Eine freie Ortswahl gehört noch nicht zum Prototyp.
+Die Vorlage startet den Browser-Generator mit Adresssuche, Straßenkarte und
+Start-/Ziel-Auswahl für neue kurze Routen in **Hessen**. Der vorbereitete
+**Altenhain–Langstraße-Datensatz** bleibt enthalten. Das Image bringt Blender
+und die Materialien mit; ein Quellcode-Checkout auf Unraid ist nicht nötig.
+Neue Routen laden ihre offenen Geodaten während des Baus aus dem Internet.
 
 - Image: `ghcr.io/gottschalkfelix4-source/road-to-assetto:latest`
 - [Unraid-Vorlage herunterladen](https://raw.githubusercontent.com/gottschalkfelix4-source/road-to-assetto/main/unraid/roadtoassetto.xml)
@@ -53,7 +54,8 @@ fi
 4. Nach dem Start über das Containersymbol **WebUI** öffnen, standardmäßig
    unter `http://UNRAID-IP:8765/`.
 5. Für einen ersten Test im Browser einen kurzen Abschnitt der Langstraße
-   erzeugen und danach Vorschauen und Strecken-ZIP öffnen.
+   erzeugen oder eine Adresse in Hessen suchen und eine eigene Straßenroute
+   wählen. Danach Vorschauen und Strecken-ZIP öffnen.
 
 Für den Start nach einem Server-Neustart kann im Docker-Tab zusätzlich
 **Autostart** aktiviert werden. Die Vorlage ist ein normales Unraid-XML-Template;
@@ -81,6 +83,29 @@ ersten Start für UID 99/GID 100 anlegen. Ein zuvor unter UID 10001 betriebenes
 Datenverzeichnis braucht eine Anpassung des Eigentümers oder ein dazu passendes
 `--user`-Argument. Vor einer solchen Migration den Container stoppen und den
 vorhandenen Appdata-Ordner sichern.
+
+## Neue Straßen auswählen
+
+Im Browser einen Ort oder eine Adresse ausdrücklich suchen, einen Treffer
+auswählen und Start sowie Ziel auf der Karte setzen. Die Route vor dem Erstellen
+prüfen. Neue Routen sind auf Hessen, 120–2.000 m, einen Ausschnitt bis 2 km² und
+höchstens 1.000 Gebäude begrenzt. Private Wege, Brücken und Tunnel werden
+ausgeschlossen. Für den ersten eigenen Test 200–500 m wählen.
+
+Der Container benötigt für diese Funktion Internetzugriff auf die Geodatendienste;
+der Browser benötigt Zugriff auf die Kartenkacheln. Routen und Geodatencache werden
+im bestehenden Appdata-Ordner unter `routes/` und `geo-cache/` gespeichert.
+Die vorbereitete Altenhain-Vorlage benötigt keine neuen Geodaten-Downloads.
+
+Die öffentliche Nominatim-Suche ist für gelegentlichen privaten Einsatz vorgesehen.
+**Die [Nominatim-Nutzungsbedingungen](https://operations.osmfoundation.org/policies/nominatim/)
+gelten auch für alle mitbenutzenden Freunde.** Die Anwendung begrenzt Anfragen
+pro Instanz und verwendet einen Cache; eine öffentliche Suchplattform oder
+mehrere unkoordinierte Instanzen sind damit nicht abgedeckt. Für einen anderen
+Anbieter in Unraid **Add another Path, Port, Variable, Label or Device → Variable**
+verwenden. Alle Variablennamen und Vorgaben stehen unter
+[Straßenkarte und Anbieter in DOCKER.md](../DOCKER.md#straßenkarte-suche-und-neue-hessen-routen).
+Es wird keine zusätzliche Portfreigabe nach außen benötigt.
 
 ## Optionale KI und Reverse Proxy
 

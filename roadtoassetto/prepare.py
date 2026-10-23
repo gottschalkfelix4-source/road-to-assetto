@@ -65,8 +65,12 @@ def ordered_road(ways):
     ends = [n for n, v in edges.items() if len(v['neighbors']) == 1]
     if len(ends) != 2:
         raise ValueError('Street must have exactly two ends')
-    # Start at southeastern end, then drive uphill toward the northwest.
-    current = min(ends, key=lambda n: edges[n]['p'][1])
+    # Saved browser routes preserve the user's A -> B direction. Existing
+    # prepared routes keep their established south-to-north orientation.
+    explicit_start=ways[0].get('route_start_node') if ways else None
+    if explicit_start is not None and explicit_start not in ends:
+        raise ValueError('Requested route start is not an endpoint')
+    current = explicit_start if explicit_start is not None else min(ends, key=lambda n: edges[n]['p'][1])
     previous = None
     result = []
     while True:
@@ -354,6 +358,8 @@ def prepare(root: Path, config: dict):
     metadata['estimated_properties'][0]=('aerial-interpreted road edge widths and obscured centreline sections'
         if alignment.get('applied') else 'constant user-estimated road width')
     metadata['aerial_resolution_m']=ortho_resolution
+    if config.get('source_route'):
+        metadata['source_route']=config['source_route']
     metadata['ground_materials']=surface_stats
     metadata['sources'].extend({'name':r['provider']+' '+r['asset'],'license':r['license'],'url':r['url']} for r in surface_stats['source_records'])
     metadata['estimated_properties'].extend(['Tree heights and aerial vegetation classification',
