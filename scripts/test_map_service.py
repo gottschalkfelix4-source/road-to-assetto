@@ -86,6 +86,8 @@ class MapHTTPTests(unittest.TestCase):
         self.geo = self.new_geo(self.folder)
         self.server = create_server(port=0, data_root=self.folder, start_worker=False,
                                     geo_service=self.geo)
+        from scripts.test_auth import authenticated_headers
+        self.auth_headers=authenticated_headers(self.server)
         self.thread = threading.Thread(target=self.server.serve_forever, args=(.03,), daemon=True)
         self.thread.start()
         self.resources.callback(self.close_server)
@@ -99,7 +101,7 @@ class MapHTTPTests(unittest.TestCase):
         self.assertFalse(self.thread.is_alive())
 
     def call(self, path, value=None, *, headers=None, raw=None):
-        fields = {'Content-Type': 'application/json'}
+        fields = {'Content-Type': 'application/json',**self.auth_headers}
         fields.update(headers or {})
         body = raw if raw is not None else (None if value is None else json.dumps(value).encode())
         request = Request(self.base + path, data=body, headers=fields)

@@ -12,6 +12,8 @@ from webapp.catalog import ROOT,config,template,projected_map
 from webapp.jobs import JobManager,QueueFull
 from webapp import ai
 from webapp.geodata import GeoError
+from webapp.auth import Accounts, AuthError
+import hmac
 
 def public_route(route):
     """Never return stored provider responses or local source-cache paths."""
@@ -35,8 +37,9 @@ def map_config():
 def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,geo_service=None):
     tiles=map_config()
     manager=JobManager(data_root,start_worker=start_worker,geo_service=geo_service)
+    accounts=Accounts(manager,local_setup=host in ('127.0.0.1','localhost','::1'))
     class Handler(BaseHTTPRequestHandler):
-        server_version='RoadToAssetto/0.13'
+        server_version='RoadToAssetto/0.14'
         def log_message(self,fmt,*args):
             # URLs contain only local template/job identifiers, never submitted names.
             print('%s %s'%(self.log_date_time_string(),fmt%args),flush=True)
@@ -46,6 +49,8 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
             self.send_header('Content-Type',kind)
             self.send_header('Content-Length',str(length))
             self.send_header('Cache-Control','no-store')
+            if getattr(self,'session_cookie',None):
+                self.send_header('Set-Cookie',self.session_cookie)
             self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Referrer-Policy','strict-origin-when-cross-origin')
             self.send_header('Content-Security-Policy',f"default-src 'self'; img-src 'self' data: {tiles['tile_origin']}; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -80,15 +85,22 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
         def do_GET(self):
             if not self.valid_host(): return
             path=urlsplit(self.path).path
+            self.user=accounts.read(self.headers)
+            if path=='/api/auth/session':
+                return self.json({'user':accounts.public(self.user),'setup_required':not accounts.has_users(),
+                                  'setup_code_required':not accounts.local_setup,'registration':'invite','visibility':'private'})
             if path=='/api/health':
                 return self.json({'status':'ok','version':config()['version'],'mode':'local','templates':['altenhain'],
-                                  'features':{'interactive_map':True,'address_search':True,'hessen_routes':True}})
+                                  'features':{'interactive_map':True,'address_search':True,'hessen_routes':True,'accounts':True,'private_jobs':True,'structures':True}})
+            if path.startswith('/api/') and not self.user:
+                return self.json({'error':'Bitte anmelden.','code':'login_required'},401)
             if path=='/api/catalog': return self.json({'templates':[template()],'map_config':{k:v for k,v in tiles.items() if k!='tile_origin'},
                 'discovery':{'region':'Hessen','min_segment_m':120,'max_length_m':None,'max_section_area_km2':2,
                              'section_length_m':1000,'preview_timeout_s':180,
                              'bounds':[7.7,49.35,10.3,51.7]}})
-            if path=='/api/jobs': return self.json({'jobs':manager.list()})
+            if path=='/api/jobs': return self.json({'jobs':manager.list(self.user['id'])})
             if path=='/api/ai/settings':
+                if not self.user['admin']:return self.json({'provider':'','image_model':'','has_key':False,'managed_by_admin':True})
                 try:return self.json(ai.public_settings(manager.root))
                 except ai.AIError as error:return self.json({'error':error.message,'code':error.code},error.status)
             if path=='/api/templates/altenhain/map.jpg':
@@ -98,11 +110,13 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
                 return self.file(ROOT/'build'/config()['id']/'ui/preview.png')
             route_match=re.fullmatch(r'/api/routes/([a-f0-9]{32})',path)
             if route_match:
+                if not accounts.own_route(self.user,route_match[1]):return self.json({'error':'Route nicht gefunden.'},404)
                 try:return self.json({'route':public_route(manager.geo.get_route(route_match[1]))})
                 except GeoError as error:return self.json({'error':str(error),'code':error.code},error.status)
             match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(download|preview\.png|driver\.png|environment\.png))?',path)
             if match:
                 job_id,artifact=match.groups()
+                if not accounts.owns_job(self.user,job_id):return self.json({'error':'Auftrag nicht gefunden.'},404)
                 if artifact:
                     return self.file(manager.artifact(job_id,'archive' if artifact=='download' else artifact.removesuffix('.png')),download=artifact=='download')
                 job=manager.get(job_id)
@@ -120,7 +134,9 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
             if origin and origin!='http://'+self.headers.get('Host','') and origin!='https://'+self.headers.get('Host',''):
                 return self.json({'error':'Anfrage von einer anderen Webseite abgelehnt.'},403)
             path=urlsplit(self.path).path
-            if path not in ('/api/jobs','/api/ai/settings','/api/ai/test','/api/search','/api/routes/preview'):
+            retry_match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})/retry',path)
+            if path not in ('/api/jobs','/api/ai/settings','/api/ai/test','/api/search','/api/routes/preview',
+                            '/api/auth/register','/api/auth/login','/api/auth/logout','/api/auth/invite') and not retry_match:
                 return self.json({'error':'Nicht gefunden.'},404)
             if self.headers.get('Content-Type','').split(';')[0]!='application/json':
                 return self.json({'error':'JSON erwartet.'},415)
@@ -129,6 +145,26 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
                 if not 0<size<=16384:
                     return self.json({'error':'Anfrage ist zu groß oder leer.'},413)
                 data=json.loads(self.rfile.read(size).decode('utf-8'))
+                if not isinstance(data,dict):raise ValueError('JSON-Objekt erwartet.')
+                if path in ('/api/auth/register','/api/auth/login'):
+                    action=accounts.register if path.endswith('register') else accounts.login
+                    token=action(data,self.client_address[0])
+                    self.session_cookie=accounts.cookie(token)
+                    user=accounts.read({'Cookie':'rtac_session='+token})
+                    return self.json({'user':accounts.public(user)},201 if path.endswith('register') else 200)
+                self.user=accounts.read(self.headers)
+                if not self.user:raise AuthError('Bitte anmelden.',401)
+                if not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),self.user['csrf']):
+                    raise AuthError('Sitzung bitte neu laden; Sicherheitsnachweis fehlt.',403)
+                if path=='/api/auth/logout':
+                    accounts.logout(self.user);self.session_cookie=accounts.cookie()
+                    return self.json({'ok':True})
+                if path=='/api/auth/invite':return self.json(accounts.invite(self.user),201)
+                if retry_match:
+                    job=manager.retry(retry_match[1],self.user['id'])
+                    return self.json(job if job else {'error':'Auftrag nicht gefunden.'},202 if job else 404)
+                if path in ('/api/ai/settings','/api/ai/test') and not self.user['admin']:
+                    raise AuthError('Die KI-Konfiguration verwaltet der Administrator.',403)
                 if path=='/api/search':
                     if not isinstance(data,dict) or set(data)!={'query'}:
                         raise ValueError('Bitte einen Suchbegriff angeben.')
@@ -136,14 +172,20 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
                 if path=='/api/routes/preview':
                     if not isinstance(data,dict) or set(data)!={'start','end'}:
                         raise ValueError('Bitte Start und Ziel auf der Karte setzen.')
-                    return self.json({'route':public_route(manager.geo.preview(data['start'],data['end']))})
+                    route=manager.geo.preview(data['start'],data['end'])
+                    accounts.own_route(self.user,route['id'],grant=True)
+                    return self.json({'route':public_route(route)})
                 if path=='/api/ai/settings':return self.json(ai.save_settings(manager.root,data))
                 if path=='/api/ai/test':return self.json(ai.test_connection(manager.root))
                 if isinstance(data,dict) and data.get('ai_materials'):
                     settings=ai.public_settings(manager.root)
                     if not settings.get('image_model'):
                         raise ValueError('Bitte zuerst einen KI-Anbieter und ein Bildmodell speichern.')
-                return self.json(manager.create(data),202)
+                if data.get('template_id')=='hessen' and not accounts.own_route(self.user,data.get('route_id','')):
+                    raise AuthError('Route nicht gefunden. Bitte zunächst selbst planen.',404)
+                return self.json(manager.create(data,owner_id=self.user['id']),202)
+            except AuthError as error:
+                return self.json({'error':str(error)},error.status)
             except ai.AIError as error:
                 return self.json({'error':error.message,'code':error.code},error.status)
             except GeoError as error:
@@ -159,6 +201,7 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
         manager.close()
         raise
     server.manager=manager
+    server.accounts=accounts
     return server
 
 def main():

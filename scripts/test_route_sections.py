@@ -67,20 +67,25 @@ class SectionMatchingTests(unittest.TestCase):
         result = section_route(self.route, xy, self.section, source)
         self.assertEqual(result['source_way_ids'], [10])
 
-    def test_selected_bridge_is_rejected_with_global_kilometre_and_name(self):
+    def test_oblique_overpass_with_stale_nodes_is_not_a_parallel_ambiguity(self):
+        nodes={**self.nodes,4:[150,-55],5:[250,55]}
+        source=osm(nodes,[(10,[1,2,3],{'highway':'motorway'}),
+                          (20,[4,5],{'highway':'path','bridge':'yes','access':'no','layer':'1'})])
+        result=section_route({**self.route,'routing':{}},self.xy+[0,.02],self.section,source)
+        self.assertEqual(result['source_way_ids'],[10])
+
+    def test_selected_bridge_preserves_extent_and_tags_for_height_model(self):
         source = osm(self.nodes, [(10, [1, 2], {'name': 'Straße'}),
                                   (20, [2, 3], {'name': 'Talbrücke', 'bridge': 'viaduct'})])
-        with self.assertRaises(GeoError) as raised:
-            section_route(self.route, self.xy, self.section, source)
-        self.assertEqual(raised.exception.code, 'unsupported_bridge')
-        self.assertIn('km 0.20', str(raised.exception))
-        self.assertIn('Talbrücke', str(raised.exception))
+        result=section_route(self.route,self.xy,self.section,source)
+        self.assertEqual(result['ways'][-1]['tags']['bridge'],'viaduct')
+        self.assertEqual(result['ways'][-1]['nodes'][0],-201)
 
     def test_tunnel_subtypes_layers_and_access_are_not_silently_cleared(self):
-        for tags, expected in [({'tunnel': 'building_passage'}, 'unsupported_tunnel'),
-                               ({'layer': '-1'}, 'unsupported_structure'),
-                               ({'covered': 'yes'}, 'unsupported_structure'),
-                               ({'motor_vehicle': 'private'}, 'unsupported_access')]:
+        for tags in [{'tunnel':'building_passage'},{'layer':'-1'},{'covered':'yes'}]:
+            result=section_route(self.route,self.xy,self.section,osm(self.nodes,[(10,[1,2,3],tags)]))
+            self.assertTrue(all(result['ways'][0]['tags'][k]==v for k,v in tags.items()))
+        for tags, expected in [({'motor_vehicle': 'private'}, 'unsupported_access')]:
             source = osm(self.nodes, [(10, [1, 2, 3], tags)])
             with self.subTest(tags=tags), self.assertRaises(GeoError) as raised:
                 section_route(self.route, self.xy, self.section, source)

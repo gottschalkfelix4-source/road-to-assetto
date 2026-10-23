@@ -6,6 +6,19 @@ Start sowie Ziel für eine eigene Straßenroute in **Hessen** auswählen.
 Die vorbereitete, rund 701 m lange **Langstraße in Bad Soden-Altenhain** bleibt
 als sofort verfügbare Vorlage mit Teilstrecken ab 120 m enthalten.
 
+Registrierung erfolgt über einmalige Einladungscodes. Jeder Nutzer hat eine
+private Streckenbibliothek; auch Vorschauen, Downloads und Aufträge werden
+serverseitig auf den Ersteller beschränkt. Das erste Konto übernimmt vorhandene
+Aufträge und verwaltet Einladungen sowie den optionalen KI-Anbieter.
+
+Lange Hessen-Routen verwenden automatisch einen lokal zwischengespeicherten
+regionalen OSM-Download von Geofabrik. Amtliche Höhendaten, Luftbilder und
+Gebäude werden weiterhin abschnittsweise geladen. Abgebrochene Aufträge können
+im Browser fortgesetzt werden; passende, geprüfte Zwischenmodelle bleiben
+erhalten. Brücken, Tunnel und kreuzende Überführungen erhalten eigene
+Kollisionsgeometrie und abgeleitete Höhen. Bauwerksformen sind typisiert,
+nicht vermessen; das Spiel muss die Strecke weiterhin praktisch validieren.
+
 ![Vorschau der generierten Strecke](docker/preview.png)
 
 ## Installation
@@ -33,8 +46,10 @@ docker compose up -d
 Anschließend [http://localhost:8766](http://localhost:8766) öffnen. Für Zugriff aus dem
 Heimnetz eine lokale `.env` mit `ROADTOASSETTO_BIND_IP=0.0.0.0` anlegen.
 Details zu Speicher, Updates, Selbstbau und Datenpaket: **[DOCKER.md](DOCKER.md)**.
-TLS bleibt bei einem vorhandenen Reverse Proxy. Die Anwendung bringt keine eigene
-Benutzeranmeldung mit; den Zugang auf das eigene Netz oder einen geschützten Proxy beschränken.
+TLS bleibt bei einem vorhandenen Reverse Proxy. Beim ersten Start den Einrichtungscode
+aus `/data/bootstrap-code.txt` verwenden und das Administratorkonto anlegen.
+Danach können Freunde mit einem vom Administrator erzeugten Einladungscode ihr
+eigenes Konto registrieren. Hinter HTTPS `ROADTOASSETTO_SECURE_COOKIE=1` setzen.
 
 ## Strecke erstellen
 
@@ -73,15 +88,21 @@ Quellen auch Platz für Modelle und Verarbeitung. Bereits gespeicherte Aufträge
 benötigen daneben weiterhin Speicher.
 
 Start und Ziel müssen höchstens 60 m von einer geeigneten Straße entfernt liegen.
-Einbahnrichtungen werden beachtet. Private Wege sowie nicht unterstützte Brücken
-und Tunnel werden bei der Datenprüfung abgewiesen. Für neue Routen ist die
+Einbahnrichtungen werden beachtet, private Wege werden abgewiesen. Brücken und
+Tunnel erhalten separate Höhenprofile und physische Bauwerksgeometrie. Für neue Routen ist die
 eingestellte Straßenbreite ein konstanter Wert zwischen 4 und 8 m. Ein erster
 Test mit 200–500 m hilft, Qualität und Leistung des eigenen Servers einzuschätzen.
 
 Für lange Verbindungen nutzt die Routenplanung OSRM auf OpenStreetMap-Daten.
 Das Standardprofil berechnet eine Autoroute und **kann Autobahnen enthalten**.
 Die Vorschau deshalb vor dem Bau prüfen; die Darstellung einer Route bestätigt
-noch keine vollständig unterstützte Brücken- oder Tunnelgeometrie. Der öffentliche
+noch keine geprüften Durchfahrtshöhen. Brückenfahrbahnen werden aus DGM-Zufahrten
+und robusten DOM1-Beobachtungen abgeleitet, Tunnelfahrbahnen zwischen den Portalen.
+Tragplatten, Geländer, Tunnelwände und Decken sind typisierte Nachbildungen.
+Unklare Höhenlagen oder zu geringe Durchfahrtshöhen führen weiterhin zu einem
+Fehler. `provenance/structures.json` dokumentiert Bauwerke und Schätzmethoden.
+Fehlgeschlagene Aufträge können mit **Bau fortsetzen** erneut gestartet werden;
+passende, prüfsummenverifizierte Zwischenmodelle und Quelldaten bleiben erhalten. Der öffentliche
 [OSRM-Demodienst](https://github.com/Project-OSRM/osrm-backend/wiki/Demo-server)
 ist für gelegentliche, nicht kommerzielle Abfragen vorgesehen. Die Anwendung
 begrenzt Anfragen und speichert Ergebnisse zwischen. Für häufige Nutzung einen
@@ -155,8 +176,16 @@ Modelle werden nicht ins Repository übernommen.
 
 GitHub Actions prüft den Code und veröffentlicht das Containerimage für den Hauptbranch
 und Versionstags. Die Unraid-Vorlage zeigt auf `latest`; ein Versions-Tag kann für feste
-Installationen gewählt werden. Der aktuelle Generatorstand ist **0.13.0**;
+Installationen gewählt werden. Der aktuelle Generatorstand ist **0.14.0**;
 das weiterhin enthaltene Altenhain-Datenpaket hat den Stand **0.11.0**.
+
+Validierungsstand für 0.14.0: 293 automatisierte Tests bestanden im Linux-Container
+mit 8 GiB RAM und vier CPU-Kernen. Anmeldung, Einladungen und die Trennung privater
+Aufträge wurden zusätzlich im Browser geprüft. Kurze echte Brücken- und Tunnelabschnitte
+wurden als KN5 und ZIP exportiert. Bei einem im Browser gestarteten 64,8-km-Test
+wurden acht von 65 Abschnittsmodellen geprüft; der Lauf wurde auf Nutzerwunsch beendet.
+Ein vollständiger Export über 50 km sowie Fahrbarkeit und Bildrate im Spiel sind
+damit noch nicht nachgewiesen. Hohe Detailstufen können lange Bauzeiten verursachen.
 
 ## Lizenz
 

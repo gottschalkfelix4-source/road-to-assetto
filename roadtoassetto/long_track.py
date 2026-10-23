@@ -15,14 +15,14 @@ import shutil
 
 import numpy as np
 from pyproj import Transformer
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import gaussian_filter1d, maximum_filter1d
 from shapely import (MultiPoint, STRtree, constrained_delaunay_triangles,
                      get_parts, linestrings, points, polygons, voronoi_polygons)
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import unary_union
 
 
-def resample_route(coordinates, spacing_m=1., check_simple=True):
+def resample_route(coordinates, spacing_m=1., check_simple=True, allow_structures=False, minimum_radius_m=None):
     """Project [latitude, longitude] and smooth one distance-resampled route."""
     values=np.asarray(coordinates,dtype=float)
     if values.ndim!=2 or values.shape[1]!=2 or len(values)<2 or not np.isfinite(values).all():
@@ -39,14 +39,30 @@ def resample_route(coordinates, spacing_m=1., check_simple=True):
     count=math.ceil(distances[-1]/spacing_m)+1
     s=np.linspace(0,distances[-1],count)
     xy=np.c_[np.interp(s,distances,source[:,0]),np.interp(s,distances,source[:,1])]
+    unsmoothed=xy.copy()
     xy=gaussian_filter1d(xy,sigma=2./spacing_m,axis=0,mode='nearest')
     xy[[0,-1]]=source[[0,-1]]
+    if minimum_radius_m is not None:
+        # OSM junction vertices can describe an angular turn instead of its
+        # drivable arc. Smooth only these local corners, still bounded by the
+        # same 1.5 m source-deviation check below. Never invert an inner lane.
+        for sigma in (3.,3.5,4.,4.2):
+            tangent=np.gradient(xy,axis=0)
+            angle=np.unwrap(np.arctan2(tangent[:,1],tangent[:,0]))
+            radius=1/np.maximum(1e-9,np.abs(np.diff(angle))/np.linalg.norm(np.diff(xy,axis=0),axis=1))
+            bad=radius<float(minimum_radius_m)
+            if not np.any(bad):break
+            mask=np.r_[bad,False]|np.r_[False,bad]
+            weight=gaussian_filter1d(maximum_filter1d(mask.astype(float),size=31),sigma=3.)
+            candidate=gaussian_filter1d(unsmoothed,sigma=sigma/spacing_m,axis=0,mode='nearest')
+            xy=xy*(1-weight[:,None])+candidate*weight[:,None]
+            xy[[0,-1]]=source[[0,-1]]
     if check_simple:
         source_tree=STRtree(linestrings(np.stack((source[:-1],source[1:]),axis=1)))
         _,deviations=source_tree.query_nearest(points(xy),return_distance=True)
         if len(deviations) and float(np.max(deviations))>1.5:
             raise ValueError('Die geglättete Fahrbahn weicht an einer engen Kurve mehr als 1,5 m von der Straßenroute ab.')
-    if check_simple and not LineString(xy).is_simple:
+    if check_simple and not allow_structures and not LineString(xy).is_simple:
         tree=STRtree(linestrings(np.stack((xy[:-1],xy[1:]),axis=1)))
         crossings=tree.query(linestrings(np.stack((xy[:-1],xy[1:]),axis=1)),predicate='crosses')
         index=int(crossings[0,0]) if crossings.size else 0
@@ -82,7 +98,7 @@ def plan_sections(xy, section_m=1000., halo_m=50., padding_m=160.):
     return result
 
 
-def build_profile(xy, raw_heights, road_width_m, crossfall=.025):
+def build_profile(xy, raw_heights, road_width_m, crossfall=.025, *, road_heights=None, structure_codes=None):
     """Smooth sampled DGM heights globally, retaining a common origin and UVs."""
     xy=np.asarray(xy,dtype=float)
     raw=np.asarray(raw_heights,dtype=float)
@@ -97,17 +113,24 @@ def build_profile(xy, raw_heights, road_width_m, crossfall=.025):
     tangent/=norms[:,None]
     left=np.c_[-tangent[:,1],tangent[:,0]]
     road_polygon=Polygon(np.vstack((xy+left*road_width_m/2,(xy-left*road_width_m/2)[::-1])))
-    if not road_polygon.is_valid:
+    if not road_polygon.is_valid and not (structure_codes is not None and np.any(structure_codes)):
         raise ValueError('Die gewählte Fahrbahnbreite erzeugt überlappende Straßenränder. Schmalere Breite oder andere Route wählen.')
     distance=np.r_[0,np.cumsum(np.linalg.norm(np.diff(xy,axis=0),axis=1))]
-    road_y=gaussian_filter1d(raw,sigma=3.,mode='nearest')
+    road_y=gaussian_filter1d(raw,sigma=3.,mode='nearest') if road_heights is None else np.asarray(road_heights,dtype=float)
+    if road_y.shape!=raw.shape or not np.isfinite(road_y).all():raise ValueError('Invalid structure road profile')
+    codes=np.zeros(len(xy),dtype=np.int8) if structure_codes is None else np.asarray(structure_codes,dtype=np.int8)
+    if codes.shape!=raw.shape:raise ValueError('Invalid structure classification')
+    from roadtoassetto.structures import validate_crossings
+    crossings=validate_crossings(xy,road_y,codes)
     grades=np.diff(road_y)/np.diff(distance)
     if np.max(np.abs(grades))>.25:
         raise ValueError('Unexpected road gradient exceeds 25 percent')
+    if len(grades)>1 and np.max(np.abs(np.diff(grades)))>.04:
+        raise ValueError('Unexpected road gradient change exceeds four percentage points per sample')
     return {'xy':xy,'road_y':road_y,'raw_heights':raw,'tangent':tangent,'left':left,
             'distance':distance,'road_widths':np.full(len(xy),float(road_width_m)),
             'origin_utm32':xy.mean(axis=0),'height_origin_m':float(road_y.min()),
-            'crossfall':float(crossfall)}
+            'crossfall':float(crossfall),'structure_codes':codes,'crossings':crossings}
 
 
 def configure_section(config, profile, section, ownership=None):
@@ -119,6 +142,8 @@ def configure_section(config, profile, section, ownership=None):
     result['_road_profile'].update(origin_utm32=np.asarray(profile['origin_utm32']).tolist(),
                                   height_origin_m=profile['height_origin_m'])
     result['_section']=dict(section)
+    if 'structure_codes' in profile:
+        result['_road_profile']['structure_codes']=np.asarray(profile['structure_codes'])[a:b].tolist()
     if ownership is not None:
         from shapely.geometry import mapping
         result['_ownership_polygon']=mapping(ownership)
@@ -184,8 +209,9 @@ class SceneClipper:
     """Clip every scenery triangle, including vertical walls, without holes."""
     def __init__(self, polygon, profile):
         origin=profile['origin_utm32']
-        from shapely import transform
+        from shapely import transform, prepare as prepare_geometry
         self.polygon=transform(polygon,lambda xy:np.c_[xy[:,0]-origin[0],-(xy[:,1]-origin[1])])
+        prepare_geometry(self.polygon)
         self.cells=list(get_parts(constrained_delaunay_triangles(self.polygon)))
         self.tree=STRtree(self.cells)
         self.cleanup={'triangles':0,'projected_area_m2':0.}
@@ -210,6 +236,7 @@ class SceneClipper:
         horizontal=vertices[faces][:,:,[0,2]]
         shapes=polygons(horizontal)
         inside=np.asarray(self.polygon.covers(shapes))
+        intersects=np.asarray(self.polygon.intersects(shapes))
         # A vertical wall has zero projected area; polygon predicates on its
         # degenerate triangle are undefined, so process it as a prism clip.
         first=horizontal[:,1]-horizontal[:,0];second=horizontal[:,2]-horizontal[:,0]
@@ -218,11 +245,12 @@ class SceneClipper:
         for index in vertical:
             # A wall entirely inside needs no expensive prism decomposition.
             # The convex hull can be a line; covers handles that geometry.
-            inside[index]=self.polygon.covers(MultiPoint(horizontal[index]).convex_hull)
-        output=[];outfaces=[]
-        for face in faces[inside]:
-            offset=len(output);output.extend(attributes[face]);outfaces.append([offset,offset+1,offset+2])
-        for index in np.flatnonzero(~inside):
+            hull=MultiPoint(horizontal[index]).convex_hull
+            inside[index]=self.polygon.covers(hull)
+            intersects[index]=self.polygon.intersects(hull)
+        output=attributes[faces[inside]].reshape(-1,attributes.shape[1]).tolist()
+        outfaces=np.arange(len(output)).reshape(-1,3).tolist()
+        for index in np.flatnonzero(~inside & intersects):
             tri=attributes[faces[index]]
             lower=horizontal[index].min(axis=0);upper=horizontal[index].max(axis=0)
             if not self.polygon.intersects(box(*lower,*upper).buffer(1e-8)):
@@ -313,7 +341,7 @@ class TerrainSeams:
         old_points=previous.reshape(-1,3) if len(previous) else np.empty((0,3))
         point_tree=STRtree(points(old_points[:,[0,2]])) if len(old_points) else None
         old_normals=previous_normals.reshape(-1,3) if len(previous) else np.empty((0,3))
-        pending=[];pending_normals=[];welded=0;inserted=0
+        pending=[];pending_normals=[];welded=0;inserted=0;collapsed=0;collapsed_area=0.
         for mesh in scene['meshes']:
             if not mesh['name'].startswith('1GRASS_TERRAIN'):continue
             edges=_boundary_edges(mesh,boundary)
@@ -381,6 +409,19 @@ class TerrainSeams:
                     center_index=len(attributes);attributes.append(center.tolist())
                     output.extend([center_index,int(a),int(b)] for a,b in zip(loop,np.roll(loop,-1)))
                 packed=np.asarray(attributes)
+                out=np.asarray(output,dtype=int)
+                triangles=packed[out,:3]
+                signed=np.cross(triangles[:,1]-triangles[:,0],triangles[:,2]-triangles[:,0])[:,1]
+                serialized=triangles.astype(np.float32).astype(float)
+                rounded=np.cross(serialized[:,1]-serialized[:,0],serialized[:,2]-serialized[:,0])[:,1]
+                # A neighbor knot can be <0.1 micrometre off the rounded
+                # clipping line. Omit only newly inserted, zero-area float32
+                # remnants; their physical footprint does not exist in KN5.
+                tiny=(signed<=0)&(np.abs(signed)<1e-7)&(np.abs(rounded)<=1e-8)&np.any(out>=len(vertices),axis=1)
+                collapsed+=int(tiny.sum());collapsed_area+=float(np.abs(signed[tiny]).sum()/2)
+                out=out[~tiny]
+                used,remap=np.unique(out.ravel(),return_inverse=True)
+                packed=packed[used];output=remap.reshape(-1,3).tolist()
                 mesh['vertices']=packed[:,:3].tolist();mesh['uv']=packed[:,3:5].tolist()
                 mesh['normals']=(packed[:,5:8]/np.maximum(np.linalg.norm(packed[:,5:8],axis=1)[:,None],1e-12)).tolist()
                 mesh['faces']=output
@@ -388,7 +429,9 @@ class TerrainSeams:
                 vertices=np.asarray(mesh['vertices']);normal=np.asarray(mesh['normals'])
             pending.extend(vertices[edges].tolist());pending_normals.extend(normal[edges].tolist())
         self.segments.extend(pending);self.normal_segments.extend(pending_normals)
-        return {'terrain_border_vertices_welded':welded,'terrain_border_knots_inserted':inserted}
+        if collapsed_area>1e-5:raise ValueError('Excessive terrain seam rounding remnants')
+        return {'terrain_border_vertices_welded':welded,'terrain_border_knots_inserted':inserted,
+                'terrain_border_rounding_remnants':collapsed,'terrain_border_rounding_area_m2':collapsed_area}
 
 
 def _core_strip(mesh, start, end, count):
@@ -416,6 +459,10 @@ def finalize_section(scene, profile, section, ownership=None):
                 from roadtoassetto.kn5 import normals
                 mesh['normals']=normals(mesh['vertices'],mesh['faces']).tolist()
             parts=[_core_strip(mesh,a,b,count)]
+        elif mesh['name'].startswith('1STRUCT_') and not mesh['name'].startswith('1STRUCT_CONTEXT_'):
+            # Already cropped by route chainage; 2-D scenery cells must never
+            # cut a bridge above a different part of the same road.
+            parts=[mesh]
         elif mesh['name'].startswith('1WALL_END_'):
             # prepare suppresses internal barriers. Retain only an endpoint
             # wall that belongs to this endpoint section.
@@ -472,6 +519,87 @@ def namespace_textures(scene, textures_dir):
     return destination
 
 
+def stabilize_terrain_winding(scene):
+    """Resolve only sub-resolution terrain faces after KN5 float32 rounding.
+
+    A 65 km shared frame has millimetre ULPs. Near-collinear terrain clipping
+    triangles can change sign when serialized. Reorient those rounding-only
+    cases, omit exactly collapsed faces, and record the affected area. Road
+    strips and source-invalid terrain are never repaired through this path.
+    """
+    stats={'reoriented_triangles':0,'collapsed_triangles':0,'source_area_m2':0.,'max_rounding_m':0.}
+    kept=[]
+    for mesh in scene['meshes']:
+        if not mesh['name'].startswith('1GRASS'):
+            kept.append(mesh);continue
+        vertices=np.asarray(mesh['vertices'],dtype=float);faces=np.asarray(mesh['faces'],dtype=int)
+        tri=vertices[faces];quantized=vertices.astype(np.float32).astype(float)[faces]
+        original=np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0])[:,1]
+        area=np.cross(quantized[:,1]-quantized[:,0],quantized[:,2]-quantized[:,0])[:,1]
+        bad=area<=1e-8
+        if not np.any(bad):kept.append(mesh);continue
+        error=np.max(np.abs(quantized[:,:,[0,2]]-tri[:,:,[0,2]]),axis=(1,2))
+        edge=np.max(np.linalg.norm(np.roll(tri[:,:,[0,2]],-1,axis=1)-tri[:,:,[0,2]],axis=2),axis=1)
+        if np.any(original[bad]<=0) or np.any(original[bad]>8*error[bad]*edge[bad]+1e-8) or np.any(error[bad]>.01):
+            raise ValueError('Invalid physical terrain is not a float32 rounding artefact')
+        reverse=area < -1e-8;collapse=np.abs(area)<=1e-8
+        faces[reverse]=faces[reverse][:,[0,2,1]]
+        stats['reoriented_triangles']+=int(reverse.sum());stats['collapsed_triangles']+=int(collapse.sum())
+        stats['source_area_m2']+=float(original[bad].sum()/2)
+        stats['max_rounding_m']=max(stats['max_rounding_m'],float(error[bad].max()))
+        faces=faces[~collapse]
+        if not len(faces):continue
+        used,remap=np.unique(faces.ravel(),return_inverse=True)
+        mesh['faces']=remap.reshape(-1,3).tolist()
+        for key in ('vertices','uv','normals'):
+            if key in mesh:mesh[key]=np.asarray(mesh[key])[used].tolist()
+        kept.append(mesh)
+    if stats['source_area_m2']>.1:
+        raise ValueError('Excessive terrain area affected by float32 rounding')
+    scene['meshes']=kept
+    return stats
+
+
+def stabilize_clipped_scenery(scene):
+    """Remove bounded sub-resolution clipping fragments from scenery only.
+
+    Polygon clipping and seven-decimal deduplication can leave a pair of
+    almost identical vertices on a tree sheet. Float32 adds another rounding
+    boundary. Such fragments have no stable surface in the exported model;
+    keep their area accounted for, without accepting invalid source meshes
+    or modifying the road and terrain collision strips.
+    """
+    import re
+    stats={'triangles':0,'source_area_m2':0.,'max_rounding_m':0.}
+    kept=[]
+    for mesh in scene['meshes']:
+        if mesh['name'].startswith(('1ROAD','1SHOULDER','1GRASS')) or not re.search(r'_C\d+_S\d+$',mesh['name']):
+            kept.append(mesh);continue
+        vertices=np.asarray(mesh['vertices'],dtype=float);faces=np.asarray(mesh['faces'],dtype=int)
+        tri=vertices[faces];quantized=vertices.astype(np.float32).astype(float)[faces]
+        area=np.linalg.norm(np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0]),axis=1)
+        rounded=np.linalg.norm(np.cross(quantized[:,1]-quantized[:,0],quantized[:,2]-quantized[:,0]),axis=1)
+        tiny=(area<1e-8)|(rounded<1e-8)
+        if not np.any(tiny):kept.append(mesh);continue
+        error=np.max(np.abs(quantized-tri),axis=(1,2))
+        edges=np.linalg.norm(np.roll(tri,-1,axis=1)-tri,axis=2)
+        if np.any(area[tiny]>8*error[tiny]*edges[tiny].max(axis=1)+1e-8) or np.any(error[tiny]>.01):
+            raise ValueError('Invalid scenery is not a clipping rounding fragment')
+        stats['triangles']+=int(tiny.sum());stats['source_area_m2']+=float(area[tiny].sum()/2)
+        stats['max_rounding_m']=max(stats['max_rounding_m'],float(error[tiny].max()))
+        faces=faces[~tiny]
+        if not len(faces):continue
+        used,remap=np.unique(faces.ravel(),return_inverse=True)
+        mesh['faces']=remap.reshape(-1,3).tolist()
+        for key in ('vertices','uv','normals'):
+            if key in mesh:mesh[key]=np.asarray(mesh[key])[used].tolist()
+        kept.append(mesh)
+    if stats['source_area_m2']>.01:
+        raise ValueError('Excessive scenery area affected by clipping rounding')
+    scene['meshes']=kept
+    return stats
+
+
 class MultiModelExporter:
     """Write/release one scene at a time; retain only compact model records."""
     def __init__(self, track, track_id, profile, sections):
@@ -490,6 +618,8 @@ class MultiModelExporter:
         if scene.get('_ownership_ac'):
             from shapely.geometry import shape
             seam_stats=self.terrain_seams.weld(scene,shape(scene['_ownership_ac']).boundary)
+        float_stats=stabilize_terrain_winding(scene)
+        scenery_stats=stabilize_clipped_scenery(scene)
         road=next(m for m in scene['meshes'] if m['name'].startswith('1ROAD_MAIN'))
         rows=np.asarray(road['vertices']).reshape(-1,7,3)
         if self.previous_road_end is not None and not np.allclose(rows[0],self.previous_road_end,atol=1e-5,rtol=0):
@@ -542,7 +672,7 @@ class MultiModelExporter:
             if mesh['name'].startswith(('1ROAD','1SHOULDER','1GRASS')):
                 tri=mesh['positions'][mesh['indices'].reshape(-1,3)]
                 if np.any(np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0])[:,1]<=1e-8):
-                    raise ValueError('Reversed or degenerate physical surface')
+                    raise ValueError('Reversed or degenerate physical surface: '+mesh['name'])
         for name,matrix in info['markers'].items():
             matrix=np.asarray(matrix);position=matrix[3,:3]
             if not np.allclose(matrix[:3,:3]@matrix[:3,:3].T,np.eye(3),atol=1e-5) or np.linalg.det(matrix[:3,:3])<.999:
@@ -556,6 +686,10 @@ class MultiModelExporter:
                 'end_m':section['end_m'],'bytes':path.stat().st_size,'sha256':digest,
                 'vertices':sum(m['vertices'] for m in info['meshes']),
                 'triangles':sum(m['triangles'] for m in info['meshes']),**seam_stats}
+        if float_stats['reoriented_triangles'] or float_stats['collapsed_triangles']:
+            record['float32_terrain_rounding']=float_stats
+        if scenery_stats['triangles']:
+            record['clipped_scenery_rounding']=scenery_stats
         if scene['metadata'].get('subresolution_clipping_cleanup'):
             record['subresolution_clipping_cleanup']=dict(scene['metadata']['subresolution_clipping_cleanup'])
         self.models.append(record)

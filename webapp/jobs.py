@@ -66,6 +66,8 @@ class JobManager:
         self.db=sqlite3.connect(self.root/'jobs.sqlite3',check_same_thread=False)
         self.db.row_factory=sqlite3.Row
         self.db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, request TEXT NOT NULL, status TEXT NOT NULL, stage TEXT NOT NULL, progress INTEGER NOT NULL, error TEXT, summary TEXT)')
+        if 'owner_id' not in {row[1] for row in self.db.execute('PRAGMA table_info(jobs)')}:
+            self.db.execute('ALTER TABLE jobs ADD COLUMN owner_id TEXT')
         self.db.execute("UPDATE jobs SET status='failed',stage='Unterbrochen',error='Der Dienst wurde während des Baus beendet. Bitte erneut erstellen.' WHERE status='running'")
         self.db.commit()
         self.worker=None
@@ -113,8 +115,10 @@ class JobManager:
                                  for view in stored.get('preview_views',['overview']) if view in ('overview','driver','environment')}
                                 if ready and row['summary'] else {})}
 
-    def list(self):
+    def list(self,owner_id=None):
         with self.lock:
+            if owner_id is not None:
+                return [self._public(r) for r in self.db.execute('SELECT * FROM jobs WHERE owner_id=? ORDER BY created_at DESC LIMIT 100',(owner_id,))]
             return [self._public(r) for r in self.db.execute('SELECT * FROM jobs ORDER BY created_at DESC LIMIT 100')]
 
     def get(self,job_id):
@@ -122,14 +126,14 @@ class JobManager:
             row=self.db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
             return self._public(row) if row else None
 
-    def create(self,value):
+    def create(self,value,owner_id=None):
         request=validate_request(value,data_root=self.root,geo_service=self.geo)
         with self.lock:
             pending=self.db.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]
             if pending>=5:
                 raise QueueFull('Die Warteschlange ist voll. Bitte einen laufenden Bau abwarten.')
             job_id=uuid.uuid4().hex
-            self.db.execute('INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?)',(job_id,now(),json.dumps(request,ensure_ascii=False),'queued','Wartet',0,None,None))
+            self.db.execute('INSERT INTO jobs (id,created_at,request,status,stage,progress,error,summary,owner_id) VALUES (?,?,?,?,?,?,?,?,?)',(job_id,now(),json.dumps(request,ensure_ascii=False),'queued','Wartet',0,None,None,owner_id))
             self.db.commit()
             self.wake.set()
             return self.get(job_id)
@@ -138,6 +142,18 @@ class JobManager:
         with self.lock:
             self.db.execute('UPDATE jobs SET '+','.join(k+'=?' for k in values)+' WHERE id=?',(*values.values(),job_id))
             self.db.commit()
+
+    def retry(self,job_id,owner_id):
+        with self.lock:
+            row=self.db.execute('SELECT status FROM jobs WHERE id=? AND owner_id=?',(job_id,owner_id)).fetchone()
+            if not row:return None
+            if row['status'] not in ('failed','cancelled'):
+                raise ValueError('Nur fehlgeschlagene Aufträge können fortgesetzt werden.')
+            if self.db.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]>=5:
+                raise QueueFull('Die Warteschlange ist voll.')
+            self.db.execute("UPDATE jobs SET status='queued',stage='Fortsetzung wartet',progress=0,error=NULL WHERE id=?",(job_id,))
+            self.db.commit();self.wake.set()
+            return self.get(job_id)
 
     def artifact(self,job_id,kind):
         job=self.get(job_id)
@@ -159,12 +175,13 @@ class JobManager:
             self._update(job_id,status='running',stage='Quelldaten vorbereiten',progress=3)
             try:
                 folder.mkdir(exist_ok=True)
+                if (folder/'error.json').is_file():(folder/'error.json').unlink()
                 (folder/'request.json').write_text(row['request'],encoding='utf-8')
                 settings=json.loads(row['request'])
                 segmented=(settings.get('template_id')=='hessen' and
                            (settings['end_m']-settings['start_m']>1000 or
                             self.geo.get_route(settings['route_id']).get('schema_version')==2))
-                with (folder/'build.log').open('w',encoding='utf-8') as log:
+                with (folder/'build.log').open('a',encoding='utf-8') as log:
                     kwargs={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}
                     self.process=subprocess.Popen([sys.executable,'-u','-m','webapp.worker','--job-dir',str(folder)],cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,**kwargs)
                     began=time.monotonic()

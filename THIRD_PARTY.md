@@ -15,6 +15,13 @@ OpenStreetMap roads, paths, building footprints and mapped vegetation:
 (c) OpenStreetMap contributors, ODbL 1.0.
 https://www.openstreetmap.org/copyright
 
+Regional OSM extracts for long Hessian routes: Geofabrik GmbH,
+https://download.geofabrik.de/europe/germany/hessen.html . OSM data remains
+ODbL-1.0; the cached download's timestamp and SHA256 identify the exact input.
+Only selected objects without contributor account metadata enter track exports.
+Pyosmium 4.3.2 (BSD-2-Clause) reads the PBF and creates complete local way extracts:
+https://github.com/osmcode/pyosmium . The installed distribution includes its license.
+
 Hessian DGM1, optional DOM1, DOP20 and INSPIRE LoD2: HVBG Hessen, Datenlizenz Deutschland - Zero 2.0.
 https://hvbg.hessen.de/geoinformation/open-data
 

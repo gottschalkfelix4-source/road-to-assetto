@@ -52,6 +52,38 @@ def road_scene(profile, section):
 
 
 class LongTrackTests(unittest.TestCase):
+    def test_float32_terrain_rounding_is_bounded_and_never_repairs_roads(self):
+        from roadtoassetto.long_track import stabilize_terrain_winding
+        # Positive source triangle becomes clockwise at a shared 20 km origin.
+        v=np.array([[-18280.19823,0,-18513.11735],[-18280.20023,0,-18513.12135],[-18280.34423,0,-18513.26735]])
+        if np.cross(v[1]-v[0],v[2]-v[0])[1]<0:v=v[[0,2,1]]
+        scene={'meshes':[{'name':'1GRASS_TEST','vertices':v.tolist(),'faces':[[0,1,2]],'uv':[[0,0]]*3}]}
+        q=v.astype(np.float32);self.assertLessEqual(np.cross(q[1]-q[0],q[2]-q[0])[1],0)
+        stats=stabilize_terrain_winding(scene)
+        self.assertLess(stats['source_area_m2'],.01)
+        self.assertGreater(stats['reoriented_triangles']+stats['collapsed_triangles'],0)
+        invalid={'meshes':[{'name':'1GRASS_BAD','vertices':[[0,0,0],[1,0,0],[0,0,1]],'faces':[[0,1,2]]}]}
+        with self.assertRaises(ValueError):stabilize_terrain_winding(invalid)
+        invalid['meshes'][0]['name']='1ROAD_MAIN'
+        self.assertEqual(stabilize_terrain_winding(invalid)['reoriented_triangles'],0)
+
+    def test_angular_osm_junction_gets_drivable_arc_within_source_tolerance(self):
+        from roadtoassetto.long_track import resample_route
+        from webapp.geodata import TO_WGS
+        source=np.array([[450000.,5556000.],[450100.,5556000.],[450120.,5556100.]])
+        lon,lat=TO_WGS.transform(source[:,0],source[:,1])
+        xy=resample_route(np.c_[lat,lon],minimum_radius_m=3.6)
+        original=LineString(source)
+        from shapely.geometry import Point
+        self.assertLessEqual(max(original.distance(Point(p)) for p in xy),1.5)
+        profile=build_profile(xy,np.full(len(xy),200.),6.)
+        section=plan_sections(xy)[0]
+        scene=road_scene(profile,section)
+        for mesh in scene['meshes']:
+            v=np.array(mesh['vertices']);f=np.array(mesh['faces'])
+            normals=np.cross(v[f[:,1]]-v[f[:,0]],v[f[:,2]]-v[f[:,0]])
+            self.assertTrue(np.all(normals[:,1]>0),mesh['name'])
+
     def test_55km_continuous_serialized_route_is_one_multimodel_track(self):
         x=np.arange(55001,dtype=float)
         xy=np.c_[400000+x,5550000+18*np.sin(x/2300)]
@@ -163,6 +195,25 @@ class LongTrackTests(unittest.TestCase):
         normals(second['vertices'],second['faces'])
         json.dumps(second,allow_nan=False)
 
+    def test_inserted_rounded_neighbor_knot_cannot_leave_clockwise_zero_area_face(self):
+        from roadtoassetto.long_track import stabilize_terrain_winding
+        a=[-16939.6377172,138.8114529,-18276.6334877]
+        b=[-16939.6790966,138.81145,-18276.7880022]
+        opposite=[-16939.74023,138.81148,-18277.01935]
+        knot=[-16939.6789988,138.81145,-18276.7876318]
+        mesh={'name':'1GRASS_TERRAIN','vertices':[a,opposite,b],'faces':[[0,1,2]],
+              'uv':[[0,0],[0,1],[1,0]],'material':0,'collision':True}
+        seam=TerrainSeams();seam.segments=[[a,knot],[knot,b]]
+        seam.normal_segments=[[[0,1,0],[0,1,0]]]*2
+        scene={'meshes':[mesh]}
+        stats=seam.weld(scene,LineString([np.array(a)[[0,2]],np.array(b)[[0,2]]]))
+        self.assertEqual(stats['terrain_border_rounding_remnants'],1)
+        self.assertLess(stats['terrain_border_rounding_area_m2'],1e-7)
+        stabilize_terrain_winding(scene)
+        for m in scene['meshes']:
+            v=np.asarray(m['vertices'],dtype=np.float32);t=v[np.asarray(m['faces'])]
+            self.assertTrue(np.all(np.cross(t[:,1]-t[:,0],t[:,2]-t[:,0])[:,1]>0))
+
     def test_only_new_microscopic_terrain_clipping_remnants_are_removed_and_counted(self):
         mesh={'name':'1GRASS_TERRAIN','vertices':[[0,0,0],[1,0,0],[1,0,1]],
               'faces':[[0,2,1]],'uv':[[0,0],[1,0],[1,1]],'material':0,'collision':True}
@@ -185,6 +236,32 @@ class LongTrackTests(unittest.TestCase):
             scene=finalize_section(road_scene(profile,sections[1]),profile,sections[1])
             scene['meshes'][0]['vertices'][0][1]+=.1
             with self.assertRaisesRegex(ValueError,'seam'):exporter.write_section(scene,sections[1],root)
+
+    def test_clipped_scenery_rounding_fragments_are_counted_without_removing_source_faces(self):
+        from roadtoassetto.long_track import stabilize_clipped_scenery
+        from roadtoassetto.kn5 import normals
+        vertices=[[-13429.8047495,208.81019,-18280.7093521],
+                  [-13429.8101972,208.8927031,-18280.6958479],
+                  [-13429.8101973,208.8927029,-18280.6958479],
+                  [-13429,209,-18280]]
+        mesh={'name':'TREE_LEAVES_C2_S0005','vertices':vertices,
+              'faces':[[0,1,2],[0,1,3]],'uv':[[0,0],[0,1],[0,1],[1,1]],'material':0}
+        scene={'meshes':[deepcopy(mesh)]}
+        stats=stabilize_clipped_scenery(scene)
+        self.assertEqual(stats['triangles'],1);self.assertLess(stats['source_area_m2'],5e-9)
+        self.assertEqual(len(scene['meshes'][0]['vertices']),3)
+        normals(scene['meshes'][0]['vertices'],scene['meshes'][0]['faces'])
+        for name in ('TREE_LEAVES','1ROAD_MAIN_C0_S0005','1SHOULDER_C0_S0005','1GRASS_C0_S0005'):
+            source={**deepcopy(mesh),'name':name};scene={'meshes':[source]}
+            self.assertEqual(stabilize_clipped_scenery(scene)['triangles'],0)
+            self.assertEqual(scene['meshes'][0],source)
+
+    def test_scenery_rounding_refuses_excessive_area_loss(self):
+        from roadtoassetto.long_track import stabilize_clipped_scenery
+        mesh={'name':'WALL_C0_S0005','vertices':[[20000,0,0],[20000,100,0],[20000.0008,100,0]],
+              'faces':[[0,1,2]],'uv':[[0,0],[0,1],[1,1]],'material':0}
+        with self.assertRaisesRegex(ValueError,'Excessive scenery'):
+            stabilize_clipped_scenery({'meshes':[mesh]})
 
     def test_bounded_map_keeps_world_to_pixel_transform(self):
         with tempfile.TemporaryDirectory() as temporary:

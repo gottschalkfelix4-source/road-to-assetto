@@ -7,6 +7,16 @@ dem Rechner benötigt, auf dem die erzeugte Strecke gefahren wird.
 
 Für Unraid: [Vorlage und Anleitung](unraid/README.md).
 
+Ab zehn Bauabschnitten lädt der Generator standardmäßig den regionalen
+[Hessen-OSM-Datensatz von Geofabrik](https://download.geofabrik.de/europe/germany/hessen.html)
+(etwa 330 MB) und erzeugt alle Straßenfenster lokal daraus. Der Download wird
+sieben Tage unter `/data/geo-cache/regional` zwischengespeichert. Das vermeidet
+Dutzende öffentliche Overpass-Abfragen pro langer Strecke. SHA256, Datenstand
+und tatsächliche Quelle werden dokumentiert. DGM1, DOP20 und LoD2 bleiben
+abschnittsweise Downloads von Hessen. `ROADTOASSETTO_OSM_MODE=auto` ist der
+Standard; `regional` erzwingt regionale Daten auch für kurze Exporte,
+`overpass` verwendet ausschließlich den konfigurierten Overpass-Dienst.
+
 ## Compose starten
 
 ```sh
@@ -23,8 +33,15 @@ ROADTOASSETTO_PORT=8766
 ```
 
 Dann ist die Oberfläche unter `http://SERVER-IP:8766` erreichbar. Die Anwendung
-hat keine eigene Anmeldung; einen externen Zugriff am vorhandenen Proxy schützen.
-TLS und Zertifikate verwaltet weiterhin dieser Proxy.
+hat eine eigene Anmeldung mit Einladungsregistrierung. Beim ersten Start den
+Einrichtungscode aus `/data/bootstrap-code.txt` im persistenten Volume lesen
+und damit das erste Administratorkonto im Browser anlegen. Dieser Code wird
+danach entfernt. Der Administrator erstellt einmal verwendbare, sieben Tage
+gültige Einladungen. Auch Administratoren sehen keine fremden Strecken.
+Bestehende Aufträge werden beim Upgrade dem ersten Konto privat zugeordnet.
+TLS und Zertifikate verwaltet weiterhin der vorhandene Proxy. Bei ausschließlichem
+HTTPS-Zugriff `ROADTOASSETTO_SECURE_COOKIE=1` setzen; direkte HTTP-Anmeldung
+funktioniert dann nur noch über HTTPS. Keine Passwörter oder Codes in URLs setzen.
 
 ## Persistenz und Ressourcen
 
@@ -92,12 +109,20 @@ deren Quellen und Modelle nacheinander verarbeitet werden. Ein gemeinsames
 `models.ini` setzt die Modelldateien zu einer Strecke zusammen. Vorschauen zeigen
 einen ausgewählten Abschnitt. Geprüft werden weiterhin höchstens 60 m Abstand
 der gewählten Punkte zur Straße, geeignete befahrbare Straßen und vollständige
-Geodaten; Brücken und Tunnel ohne unterstützte Geometrie werden abgewiesen.
+Geodaten. Brücken verwenden ein eigenes, aus Zufahrten und DOM1 abgeleitetes
+Fahrbahnhöhenmodell mit Tragplatte und Geländern. Tunnel erhalten eine offene
+Durchfahrt mit Wänden und Decke; das Gelände darüber bleibt erhalten.
+OSM `layer` ist keine absolute Höhe. Nicht eindeutig auflösbare Kreuzungen
+werden weiterhin mit Fehler abgebrochen. Die Bauwerksformen sind typisiert,
+keine vermessenen Ingenieurmodelle. Details stehen in `provenance/structures.json`.
+Fehlgeschlagene Aufträge können über **Bau fortsetzen** mit ihren vorhandenen
+Quelldaten fortgesetzt werden. Zwischenmodelle werden nur bei passender
+Generatorversion, Konfiguration und Prüfsumme wiederverwendet.
 Die Straßenbreite neuer Routen liegt zwischen 4 und 8 m. Anbietergrenzen,
 Speicherplatz, Verarbeitungszeit und Leistung im Spiel sind weiterhin relevant.
 Ein Bauabschnitt umfasst normalerweise rund 1 km Strecke plus einen 50-m-
 Überlappungsbereich für die Anschlüsse. Pro Datenabruf bleiben die Fläche auf
-2 km² und LoD2-Gebäude auf 1.000 begrenzt. Der gesamte Auftrag hat kein starres
+2 km² und LoD2-Gebäude einschließlich Gebäudeteilen auf 5.000 begrenzt. Der gesamte Auftrag hat kein starres
 30-Minuten-Limit mehr; ohne Fortschritt über 30 Minuten wird die Verarbeitung
 abgebrochen. Einzelne Datenabrufe und Renderprozesse haben eigene Zeitgrenzen.
 

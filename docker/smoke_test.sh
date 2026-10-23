@@ -29,11 +29,18 @@ docker exec -i "$container" python - <<'PY'
 import json
 import os
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import urlopen, Request, build_opener, HTTPCookieProcessor
+import secrets
 assert (os.getuid(), os.getgid()) == (99, 100)
 base = 'http://127.0.0.1:8765'
+opener=build_opener(HTTPCookieProcessor())
+with opener.open(Request(base+'/api/auth/register',data=json.dumps({'username':'ci_operator',
+    'password':secrets.token_urlsafe(24),'invite':Path('/data/bootstrap-code.txt').read_text().strip()}).encode(),
+    headers={'Content-Type':'application/json'}),timeout=15) as response:
+    assert response.status==201
+    assert json.load(response)['user']['admin']
 def read(path):
-    with urlopen(base + path, timeout=15) as response:
+    with opener.open(base + path, timeout=15) as response:
         assert response.status == 200
         return response.read()
 health = json.loads(read('/api/health'))

@@ -23,8 +23,9 @@
     if(options.signal?.aborted)abort();
     else options.signal?.addEventListener('abort',abort,{once:true});
     try {
-      const response=await fetch(path,{...options,signal:controller.signal,headers:{Accept:'application/json',...(options.body?{'Content-Type':'application/json'}:{}),...options.headers}});
+      const response=await fetch(path,{...options,signal:controller.signal,headers:{Accept:'application/json',...(options.body?{'Content-Type':'application/json','X-CSRF-Token':state.user?.csrf||''}:{}),...options.headers}});
       const data=await response.json().catch(()=>null);
+      if(response.status===401 && state.user){state.user=null;showAuth(false);clearTimeout(state.timer);}
       if(!response.ok) throw new Error(typeof data?.error==='string' ? data.error : typeof data?.detail==='string' ? data.detail : `Anfrage fehlgeschlagen (${response.status}).`);
       if(data===null) throw new Error('Der Dienst hat eine ungültige Antwort gesendet.');
       return data;
@@ -48,7 +49,7 @@
   }
   function persistForm() {
     if(!state.template)return;
-    try{localStorage.setItem(`road-to-assetto:${state.mode}`,JSON.stringify({...formValues(),points:state.points}));}catch{/* Storage is optional. */}
+    try{localStorage.setItem(`road-to-assetto:${state.user?.id}:${state.mode}`,JSON.stringify({...formValues(),points:state.points}));}catch{/* Storage is optional. */}
   }
   function loadTemplate(template,catalog) {
     const coords=template?.map?.coordinates;
@@ -67,7 +68,7 @@
     ui['route-mode'].disabled=false;ui['search-button'].disabled=false;ui['form-fields'].disabled=false;ui['fit-map'].disabled=false;
     switchMode(ui['route-mode'].value,false);
     try {
-      const saved=JSON.parse(localStorage.getItem(`road-to-assetto:${state.mode}`));
+      const saved=JSON.parse(localStorage.getItem(`road-to-assetto:${state.user?.id}:${state.mode}`));
       if(saved && typeof saved==='object') {
         applySettings(saved);
         if(state.mode==='hessen' && saved.points)for(const endpoint of ['start','end'])if(validPoint(saved.points[endpoint]))state.points[endpoint]=saved.points[endpoint];
@@ -94,7 +95,7 @@
     cancelPreview();
     state.routeVersion++;
     let saved=null;
-    try{saved=JSON.parse(localStorage.getItem(`road-to-assetto:${mode}`));}catch{/* Storage is optional. */}
+    try{saved=JSON.parse(localStorage.getItem(`road-to-assetto:${state.user?.id}:${mode}`));}catch{/* Storage is optional. */}
     if(remember)persistForm();
     state.mode=mode==='altenhain'?'altenhain':'hessen';ui['route-mode'].value=state.mode;
     state.map.setMode(state.mode);state.pick=null;updatePick();
@@ -184,7 +185,7 @@
     $('route-feedback').textContent=plannedRoute ? `${distanceLabel(route.length_m)} Straßenverlauf ermittelt. Geodaten und Bauwerke werden vor dem Export geprüft.` : `${distanceLabel(route.length_m)} Straßenverlauf geprüft. Die Strecke kann jetzt erstellt werden.`;
     const plan=[];
     if(Number.isInteger(route.sections_count)&&route.sections_count>1)plan.push(`Der Server baut ${metres.format(route.sections_count)} Abschnitte nacheinander. Du erhältst eine zusammenhängende Strecke.`);
-    if(plannedRoute)plan.push('Brücken und Tunnel werden noch nicht unterstützt.');
+    if(plannedRoute)plan.push('Brücken und Tunnel erhalten ein eigenes Höhenmodell; Bauwerksformen werden aus offenen Daten abgeleitet.');
     const estimates=route.estimates||{},sizes=[];
     if(Number.isFinite(estimates.source_bytes)&&estimates.source_bytes>0)sizes.push(`${storageLabel(estimates.source_bytes)} Geodaten`);
     if(Number.isFinite(estimates.workspace_bytes)&&estimates.workspace_bytes>0)sizes.push(`${storageLabel(estimates.workspace_bytes)} Arbeitsdaten auf dem Server`);
@@ -220,7 +221,7 @@
   function selectJob(id,hash=true){state.selectedJob=id;if(hash)history.replaceState(null,'',`${location.pathname}${location.search}#job=${id}`);$('share-url').hidden=true;$('share-feedback').textContent='';renderJobs();}
   function renderJobs() {
     ui['jobs-count'].textContent=state.jobs.length?`${state.jobs.length} ${state.jobs.length===1?'Strecke':'Strecken'}`:'Noch keine Strecken';
-    if(!state.jobs.length){ui['job-list'].replaceChildren(element('p','empty-state','Hier erscheinen die Strecken aller Nutzer dieses Servers.'));ui['job-detail'].hidden=true;updateSubmit();return;}
+    if(!state.jobs.length){ui['job-list'].replaceChildren(element('p','empty-state','Hier erscheinen deine privaten Strecken.'));ui['job-detail'].hidden=true;updateSubmit();return;}
     if(!state.jobs.some(job=>job.id===state.selectedJob))state.selectedJob=state.jobs.find(job=>['running','queued'].includes(job.status))?.id||state.jobs[0].id;
     const focusId=document.activeElement?.closest('.job-row')?.dataset.jobId;
     const rows=state.jobs.map(job=>{const button=element('button',`job-row${job.id===state.selectedJob?' selected':''}`);button.type='button';button.dataset.jobId=job.id;button.setAttribute('aria-pressed',String(job.id===state.selectedJob));button.append(element('span','job-row-name',job.name||'Unbenannte Strecke'));const meta=element('span','job-row-meta');meta.append(element('span','',dateLabel(job.created_at)),element('span',job.status==='succeeded'?'success':job.status==='failed'?'failed':'',statuses[job.status]||'Unbekannt'));button.append(meta);button.addEventListener('click',()=>selectJob(job.id));return button;});
@@ -231,6 +232,7 @@
     if (!job) {ui['job-detail'].hidden=true;return;}
     ui['job-detail'].hidden=false;
     $('reuse-job').disabled=!job.settings || state.reusing;
+    $('retry-job').hidden=!['failed','cancelled'].includes(job.status);
     $('share-job').disabled=false;
     ui['job-name'].textContent=job.name || 'Unbenannte Strecke';
     ui['job-state'].textContent=statuses[job.status] || job.status;
@@ -292,18 +294,20 @@
 
 
   async function refresh() {
+    if(!state.user)return;
     if(state.polling)return;state.polling=true;clearTimeout(state.timer);
+    const accountId=state.user.id;let linkedError='';
     try {
-      if(!state.template){const catalog=await api('/api/catalog');const template=catalog.templates?.find(item=>item.id==='altenhain');if(!template)throw new Error('Der Streckenkatalog ist nicht verfügbar.');loadTemplate(template,catalog);}
-      const data=await api('/api/jobs');if(!Array.isArray(data.jobs))throw new Error('Die Streckenliste konnte nicht geladen werden.');
+      if(!state.template){const catalog=await api('/api/catalog');if(state.user?.id!==accountId)return;const template=catalog.templates?.find(item=>item.id==='altenhain');if(!template)throw new Error('Der Streckenkatalog ist nicht verfügbar.');loadTemplate(template,catalog);}
+      const data=await api('/api/jobs');if(state.user?.id!==accountId)return;if(!Array.isArray(data.jobs))throw new Error('Die Streckenliste konnte nicht geladen werden.');
       state.jobs=data.jobs.filter(job=>job&&/^[a-f0-9]{32}$/.test(job.id)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
       if(state.lastCreatedJob&&!state.jobs.some(job=>job.id===state.lastCreatedJob.id))state.jobs.unshift(state.lastCreatedJob);else state.lastCreatedJob=null;
       const linked=hashJob();
       if(linked&&!state.jobs.some(job=>job.id===linked)){
-        try{state.linkedJob=state.linkedJob?.id===linked?state.linkedJob:await api(`/api/jobs/${linked}`);if(state.linkedJob?.id===linked)state.jobs.push(state.linkedJob);}catch{showError('share-feedback','Diese Strecke wurde nicht gefunden.');}
+        try{const job=state.linkedJob?.id===linked?state.linkedJob:await api(`/api/jobs/${linked}`);if(state.user?.id!==accountId)return;state.linkedJob=job;if(job?.id===linked)state.jobs.push(job);}catch{linkedError='Diese Strecke wurde nicht gefunden oder gehört zu einem anderen Konto.';}
       }
       if(linked&&state.jobs.some(job=>job.id===linked))state.selectedJob=linked;
-      renderJobs();state.failures=0;connection(true);showError('global-error','');
+      renderJobs();state.failures=0;connection(true);showError('global-error',linkedError);
     }catch(error){state.failures++;connection(false);showError('global-error',errorMessage(error));if(!state.map)ui['map-loading'].textContent='Die Karte wird geladen, sobald der Server wieder erreichbar ist.';}
     finally{state.polling=false;state.timer=setTimeout(refresh,state.failures?Math.min(30000,3000*state.failures):state.jobs.some(job=>['queued','running'].includes(job.status))?2000:8000);}
   }
@@ -365,6 +369,12 @@
     }catch(error){showError('form-error',errorMessage(error));}
     finally{state.reusing=false;$('reuse-job').disabled=false;ui['form-fields'].disabled=false;ui['route-mode'].disabled=false;updateSubmit();}
   });
+  $('retry-job').addEventListener('click',async()=>{
+    if(!state.selectedJob)return;$('retry-job').disabled=true;
+    try{await api(`/api/jobs/${state.selectedJob}/retry`,{method:'POST',body:'{}'});await refresh();}
+    catch(error){showError('share-feedback',errorMessage(error));}
+    finally{$('retry-job').disabled=false;}
+  });
   window.addEventListener('hashchange',()=>{state.selectedJob=hashJob();refresh();});
   window.addEventListener('online',refresh);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
   let aiDirty=false;
@@ -411,5 +421,54 @@
     } catch(error) {$('ai-settings-status').textContent=errorMessage(error);}
     finally {$('ai-test').disabled=false;$('ai-save').disabled=false;}
   });
-  refresh();
+  let registering=false,setupRequired=false,setupCodeRequired=false;
+  function showAuth(register) {
+    registering=register;
+    $('auth-panel').hidden=false;$('app-main').hidden=true;
+    $('logout').hidden=true;$('create-invite').hidden=true;$('account-name').textContent='';
+    $('open-ai-settings').hidden=true;
+    $('auth-title').textContent=setupRequired?'Erstes Konto einrichten':register?'Konto erstellen':'Anmelden';
+    $('auth-description').textContent=setupRequired?'Das erste Konto verwaltet Einladungen und übernimmt vorhandene Strecken. Neue Strecken bleiben für ihren Ersteller privat.':'Deine Strecken, Vorschauen und Downloads sind nur in deinem Konto sichtbar.';
+    $('auth-submit').textContent=register?'Konto erstellen':'Anmelden';
+    $('auth-switch').textContent=register?'Bereits registriert? Anmelden':'Mit Einladung registrieren';
+    $('auth-switch').hidden=setupRequired;
+    $('invite-field').hidden=!register || (setupRequired&&!setupCodeRequired);
+    $('auth-invite').required=register&&(!setupRequired||setupCodeRequired);
+    $('auth-password').minLength=register?12:1;
+    $('auth-password').autocomplete=register?'new-password':'current-password';
+    if(setupRequired&&setupCodeRequired)$('auth-description').textContent+=' Einrichtungscode: Datei /data/bootstrap-code.txt im Appdata-Verzeichnis.';
+    $('connection-state').textContent='Anmeldung erforderlich';
+  }
+  function signedIn(user) {
+    state.jobs=[];state.selectedJob=null;state.linkedJob=null;state.lastCreatedJob=null;state.template=null;state.route=null;state.points={start:null,end:null};
+    state.user=user;$('auth-panel').hidden=true;$('app-main').hidden=false;
+    $('account-name').textContent=user.username;$('logout').hidden=false;
+    $('create-invite').hidden=!user.admin;$('open-ai-settings').hidden=!user.admin;
+    $('configure-ai').hidden=!user.admin;
+    $('auth-password').value='';$('auth-invite').value='';
+    refresh();
+  }
+  $('auth-switch').addEventListener('click',()=>{showError('auth-error','');showAuth(!registering);});
+  $('auth-form').addEventListener('submit',async event=>{
+    event.preventDefault();$('auth-submit').disabled=true;showError('auth-error','');
+    try {
+      const data=await api('/api/auth/'+(registering?'register':'login'),{method:'POST',body:JSON.stringify({username:$('auth-username').value.trim(),password:$('auth-password').value,invite:$('auth-invite').value.trim()})});
+      // A fresh document also clears any old account's pending requests,
+      // rendered previews and form state on a shared browser.
+      location.reload();
+    } catch(error){showError('auth-error',errorMessage(error));}
+    finally{$('auth-submit').disabled=false;}
+  });
+  $('logout').addEventListener('click',async()=>{
+    try{await api('/api/auth/logout',{method:'POST',body:'{}'});location.replace('/');}
+    catch(error){showError('global-error',errorMessage(error));}
+  });
+  $('create-invite').addEventListener('click',async()=>{
+    $('create-invite').disabled=true;
+    try{const data=await api('/api/auth/invite',{method:'POST',body:'{}'});$('invite-code').value=data.code;$('invite-dialog').showModal();$('invite-code').select();}
+    catch(error){showError('global-error',errorMessage(error));}
+    finally{$('create-invite').disabled=false;}
+  });
+  $('close-invite').addEventListener('click',()=>{$('invite-code').value='';$('invite-dialog').close();});
+  api('/api/auth/session').then(data=>{setupRequired=data.setup_required;setupCodeRequired=data.setup_code_required;if(data.user)signedIn(data.user);else showAuth(setupRequired);}).catch(error=>showError('auth-error',errorMessage(error)));
 })();

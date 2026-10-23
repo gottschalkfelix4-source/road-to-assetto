@@ -102,6 +102,8 @@ class WebTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory(dir=ROOT/'test-results',prefix='web-test-')
         cls.server=create_server(port=0,data_root=cls.temp.name,start_worker=False)
+        from scripts.test_auth import authenticated_headers
+        cls.auth_headers=authenticated_headers(cls.server)
         cls.thread=threading.Thread(target=cls.server.serve_forever,daemon=True);cls.thread.start()
         cls.url='http://127.0.0.1:'+str(cls.server.server_port)
 
@@ -110,7 +112,7 @@ class WebTests(unittest.TestCase):
         cls.server.shutdown();cls.thread.join();cls.server.server_close();cls.server.manager.close();cls.temp.cleanup()
 
     def call(self,path,body=None,headers=None):
-        h={'Content-Type':'application/json'};h.update(headers or {})
+        h={'Content-Type':'application/json',**self.auth_headers};h.update(headers or {})
         req=Request(self.url+path,data=json.dumps(body).encode() if body is not None else None,headers=h)
         try:
             with urlopen(req,timeout=10) as response:

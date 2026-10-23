@@ -38,6 +38,8 @@ class AIHTTPIntegrationTests(unittest.TestCase):
             'webapp.ai._request', side_effect=AssertionError('No upstream API is allowed in integration tests')))
         self.resources.callback(upstream.assert_not_called)
         self.server = create_server(port=0, data_root=self.root, start_worker=False)
+        from scripts.test_auth import authenticated_headers
+        self.auth_headers=authenticated_headers(self.server)
         self.thread = threading.Thread(target=self.server.serve_forever, args=(.05,), daemon=True)
         self.thread.start()
         self.resources.callback(self.close_server)
@@ -54,7 +56,7 @@ class AIHTTPIntegrationTests(unittest.TestCase):
     def call(self, path, payload=None):
         request = Request(self.base + path,
                           data=None if payload is None else json.dumps(payload).encode('utf-8'),
-                          headers={'Content-Type': 'application/json'})
+                          headers={'Content-Type': 'application/json',**self.auth_headers})
         try:
             response = self.opener.open(request, timeout=10)
         except HTTPError as error:

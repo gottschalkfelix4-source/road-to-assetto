@@ -54,12 +54,17 @@ class RouteTests(unittest.TestCase):
         result = plan_route(data, position(35), position(350), self.bounds)
         self.assertAlmostEqual(result['length_m'], 315, places=2)
 
-    def test_bridges_tunnels_private_and_unpaved_paths_rejected(self):
-        for extra in ({'bridge': 'viaduct'}, {'tunnel': 'building_passage'}, {'access': 'private'}, {'highway': 'footway'}, {'layer': '1'}):
+    def test_private_and_non_motor_paths_rejected(self):
+        for extra in ({'access': 'private'}, {'highway': 'footway'}):
             with self.subTest(extra=extra):
                 data = osm([(10, [1, 2, 3, 4, 5], {'highway': 'residential', **extra})])
                 with self.assertRaises(GeoError):
                     plan_route(data, position(0), position(400), self.bounds)
+
+    def test_structure_tags_survive_local_planning(self):
+        for extra in ({'bridge':'viaduct'},{'tunnel':'building_passage'},{'layer':'1'}):
+            result=plan_route(osm([(10,[1,2,3,4,5],{'highway':'residential',**extra})]),position(0),position(400),self.bounds)
+            self.assertTrue(all(result['ways'][0]['tags'][k]==v for k,v in extra.items()))
 
     def test_oneway_direction_and_disconnected_components(self):
         data = osm([(10, [1, 2, 3, 4, 5], {'highway': 'residential', 'oneway': 'yes'})])
@@ -183,7 +188,7 @@ class ProviderTests(unittest.TestCase):
                 routed.assert_called_once()
 
     def test_no_eligible_private_roads_do_not_trigger_routing_fallback(self):
-        for tags in ({'access': 'private'}, {'highway': 'footway'}, {'bridge': 'yes'}):
+        for tags in ({'access': 'private'}, {'highway': 'footway'}):
             content = osm([(10, [1, 2, 3, 4, 5], {'highway': 'residential', **tags})])
             with self.subTest(tags=tags), patch.object(self.service, '_confirm_hessen'), patch.object(self.service, '_osm', return_value=('1' * 64, content)):
                 with patch.object(self.service, '_preview_routed') as routed:
@@ -243,6 +248,17 @@ class ProviderTests(unittest.TestCase):
                 self.service._raster(self.root / (name + '.tif'), bounds, 'dgm')
             self.assertFalse((self.root / (name + '.download.tif')).exists())
 
+    def test_contained_raster_reused_at_native_resolution_without_network(self):
+        source=self.service.cache/'inputs'/'existing'/'dgm1.tif'
+        source.parent.mkdir(parents=True);source.write_bytes(self.raster())
+        bounds=[BASE[0]+2,BASE[1]+3,BASE[0]+17,BASE[1]+18]
+        with patch.object(self.service,'_request_bytes',side_effect=AssertionError('No download')):
+            record=self.service._raster(self.root/'cropped.tif',bounds,'dgm')
+        self.assertEqual(record['bounds'],bounds)
+        self.assertEqual(record['width'],15)
+        self.assertEqual(record['height'],15)
+        self.assertIn('cropped_from_cached_source_sha256',record)
+
     @staticmethod
     def buildings(start, count, reported='unknown'):
         root = ET.Element(WFS + 'FeatureCollection', numberMatched=reported, numberReturned='0')
@@ -260,11 +276,18 @@ class ProviderTests(unittest.TestCase):
 
     def test_lod2_repeated_pages_truncation_and_limit_fail(self):
         cases = [[self.buildings(0, 250), self.buildings(0, 250)],
-                 [self.buildings(0, 2, reported='100')], [self.buildings(0, 2, reported='1001')]]
+                 [self.buildings(0, 2, reported='100')], [self.buildings(0, 2, reported='5001')]]
         for responses in cases:
             with self.subTest(pages=len(responses)), patch.object(self.service, '_request_bytes', side_effect=responses), self.assertRaises(GeoError):
                 self.service._lod2(self.root / 'rejected.gml', RouteTests.bounds)
             self.assertFalse((self.root / 'rejected.gml').exists())
+
+    def test_dense_town_window_preserves_more_than_one_thousand_buildings(self):
+        responses=[self.buildings(i,250) for i in range(0,1000,250)]+[self.buildings(1000,3)]
+        with patch.object(self.service,'_request_bytes',side_effect=responses):
+            result=self.service._lod2(self.root/'dense.gml',RouteTests.bounds)
+        self.assertEqual(result['building_count'],1003)
+        self.assertEqual(len(ET.parse(self.root/'dense.gml').findall(WFS+'member')),1003)
 
     def test_empty_lod2_extract_remains_empty_in_building_engine(self):
         from PIL import Image

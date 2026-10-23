@@ -16,11 +16,25 @@
   <a class="skip-link" href="#track-form">Zu den Streckeneinstellungen</a>
   <header class="app-header">
     <a class="wordmark" href="/" aria-label="Road to Assetto – Startseite"><svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><path d="M4 25 11 3h6l7 22M14 5v4m0 4v4m0 4v4" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>Road to Assetto</span></a>
-    <nav class="header-links" aria-label="Hauptnavigation"><a href="#workspace">Karte</a><a href="#results-title">Gespeicherte Strecken</a></nav>
+    <nav class="header-links" aria-label="Hauptnavigation"><a href="#workspace">Karte</a><a href="#results-title">Meine Strecken</a></nav>
+    <span id="account-name"></span><button id="create-invite" class="secondary compact" type="button" hidden>Freund einladen</button><button id="logout" class="text-button" type="button" hidden>Abmelden</button>
     <button id="open-ai-settings" type="button" class="secondary compact">KI-Anbieter</button>
     <div class="connection"><span id="connection-state" role="status">Verbinde …</span><button id="retry-connection" class="text-button" type="button" hidden>Erneut versuchen</button></div>
   </header>
-  <main>
+  <section id="auth-panel" class="auth-panel" aria-labelledby="auth-title">
+    <h1 id="auth-title">Anmelden</h1>
+    <p id="auth-description">Deine Strecken, Vorschauen und Downloads sind nur in deinem Konto sichtbar.</p>
+    <form id="auth-form">
+      <label for="auth-username">Benutzername</label><input id="auth-username" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_.-]{2,31}">
+      <label for="auth-password">Passwort</label><input id="auth-password" name="password" type="password" autocomplete="current-password" required maxlength="256">
+      <div id="invite-field" hidden><label for="auth-invite">Einladungscode</label><input id="auth-invite" name="invite" autocomplete="off" maxlength="128"></div>
+      <p id="auth-error" role="alert"></p>
+      <button id="auth-submit" type="submit">Anmelden</button>
+      <button id="auth-switch" class="text-button" type="button">Mit Einladung registrieren</button>
+    </form>
+  </section>
+  <dialog id="invite-dialog"><h2>Freund einladen</h2><p>Der Code ist sieben Tage gültig und kann einmal verwendet werden. Jeder erhält eine private Streckenbibliothek.</p><label for="invite-code">Einladungscode</label><input id="invite-code" readonly><button id="close-invite" type="button">Schließen</button></dialog>
+  <main id="app-main" hidden>
     <div id="global-error" class="global-error" role="alert" hidden></div>
     <div class="route-toolbar">
       <div class="mode-field"><label for="route-mode">Streckenauswahl</label><select id="route-mode" disabled><option value="hessen">Neue Straße in Hessen</option><option value="altenhain">Altenhain · vorbereitete Langstraße</option></select></div>
@@ -68,9 +82,9 @@
       </aside>
     </div>
     <section class="results-section" aria-labelledby="results-title">
-      <div class="results-heading"><div><h2 id="results-title">Gespeicherte Strecken</h2><p>Auf diesem Server gemeinsam verfügbar.</p></div><span id="jobs-count">Noch keine Exporte</span><button id="refresh-jobs" class="text-button" type="button">Aktualisieren</button></div>
+      <div class="results-heading"><div><h2 id="results-title">Meine Strecken</h2><p>Nur für dich sichtbar.</p></div><span id="jobs-count">Noch keine Exporte</span><button id="refresh-jobs" class="text-button" type="button">Aktualisieren</button></div>
       <div class="results-layout"><div id="job-list" class="job-list"><p class="empty-state">Noch keine Strecken gespeichert.</p></div><section id="job-detail" class="job-detail" aria-label="Gewählter Export" hidden>
-        <div class="job-detail-heading"><h3 id="job-name"></h3><span id="job-state"></span></div><div class="job-actions"><button id="reuse-job" class="secondary compact" type="button" disabled>Auswahl übernehmen</button><button id="share-job" class="text-button" type="button">Link teilen</button><span id="share-feedback" role="status"></span></div><input id="share-url" type="text" readonly aria-label="Link zu dieser Strecke" hidden>
+        <div class="job-detail-heading"><h3 id="job-name"></h3><span id="job-state"></span></div><div class="job-actions"><button id="retry-job" class="secondary compact" type="button" hidden>Bau fortsetzen</button><button id="reuse-job" class="secondary compact" type="button" disabled>Auswahl übernehmen</button><button id="share-job" class="text-button" type="button">Privaten Link kopieren</button><span id="share-feedback" role="status"></span></div><input id="share-url" type="text" readonly aria-label="Link zu dieser Strecke" hidden>
         <div id="job-progress-block"><p id="job-stage" role="status" aria-live="polite"></p><progress id="job-progress" max="100" value="0" aria-label="Fortschritt der Generierung"></progress><div class="progress-caption"><span id="job-progress-text">0 %</span><span>Der Auftrag läuft auf dem Server weiter.</span></div></div>
         <p id="job-error" class="form-error" hidden></p><div id="job-success" hidden><div class="preview-gallery"><nav id="preview-views" aria-label="Vorschauansicht"></nav><a id="preview-open" target="_blank" rel="noopener"><img id="job-preview" alt="Gerenderte Vorschau der erzeugten Strecke" hidden></a><p id="preview-caption">Vorschauen aus dem erzeugten 3D-Modell. Zum Vergrößern anklicken.</p></div><div class="finished-layout"><div><p id="job-summary"></p><p id="job-section-note" class="field-hint" hidden></p><details id="job-source-notes" class="route-notes" hidden><summary id="job-source-title">Hinweise zu den Geodaten</summary><ul id="job-source-warnings" class="route-warnings"></ul></details><a id="job-download" class="primary download-button" download>Strecke herunterladen</a><p class="install-help">ZIP in Content Manager ziehen. Danach unter <strong>Training / Practice</strong> auswählen.</p></div></div></div>
       </section></div>

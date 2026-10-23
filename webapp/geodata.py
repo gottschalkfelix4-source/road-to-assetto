@@ -32,7 +32,7 @@ DGM = 'https://inspire-hessen.de/raster/dgm1/ows'
 DOP = 'https://inspire-hessen.de/raster/dop20/ows'
 DOM = 'https://inspire-hessen.de/raster/dom1/ows'
 LOD2 = 'https://inspire-hessen.de/ows/services/org.2.ef07833e-78a6-4c2c-a895-e31de788aac3_wfs'
-USER_AGENT = 'RoadToAssetto/0.12 (personal track generator; https://github.com/gottschalkfelix4-source/road-to-assetto)'
+USER_AGENT = 'RoadToAssetto/0.14 (personal track generator; https://github.com/gottschalkfelix4-source/road-to-assetto)'
 WFS = '{http://www.opengis.net/wfs/2.0}'
 GML = '{http://www.opengis.net/gml/3.2}'
 BU = '{http://inspire.ec.europa.eu/schemas/bu-core3d/4.0}'
@@ -42,7 +42,9 @@ MAX_AREA_M2 = 2_000_000
 LOCAL_ROUTING_M = 1000
 MIN_ROUTE_M = 120
 MAX_SNAP_M = 60
-MAX_BUILDINGS = 1000
+# Dense town windows also include garages and outbuildings. Acquire in bounded
+# 250-feature pages; only houses in the route's ownership corridor are built.
+MAX_BUILDINGS = 5000
 CACHE_SECONDS = 7 * 86400
 TO_UTM = Transformer.from_crs(4326, 25832, always_xy=True)
 TO_WGS = Transformer.from_crs(25832, 4326, always_xy=True)
@@ -133,10 +135,6 @@ def _eligible(tags):
     if tags.get('highway') not in ('primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service'):
         return False
     if tags.get('area') == 'yes' or tags.get('service') in ('driveway', 'parking_aisle', 'emergency_access'):
-        return False
-    if any(tags.get(key, 'no') not in ('no', '0', 'false', '') for key in ('bridge', 'tunnel')):
-        return False
-    if tags.get('layer', '0') not in ('0', ''):
         return False
     return not any(tags.get(key) in ('no', 'private', 'agricultural', 'forestry') for key in ('access', 'vehicle', 'motor_vehicle', 'motorcar'))
 
@@ -399,7 +397,8 @@ class GeoService:
                 return cached[0], cached[1]
             west, south, east, north = bounds
             bbox = ','.join(f'{value:.7f}' for value in (south, west, north, east))
-            query = f'[out:xml][timeout:45][maxsize:33554432];(way({bbox});node["natural"="tree"]({bbox}););(._;>;);out body;'
+            used_ways=''.join(f'way["{tag}"]({bbox});' for tag in ('highway','building','natural','landuse','barrier'))
+            query = f'[out:xml][timeout:45][maxsize:33554432];({used_ways}node["natural"="tree"]({bbox}););(._;>;);out body;'
             content = self._request_bytes(self.overpass, data={'data': query}, max_bytes=32_000_000, timeout=90)
             document = _xml(content)
             if document.tag != 'osm' or document.find('remark') is not None or not document.findall('way'):
@@ -471,7 +470,7 @@ class GeoService:
                      created_at=datetime.now(timezone.utc).isoformat(),
                      warnings=['Straßenverlauf aus OpenStreetMap; keine vermessenen Fahrbahnränder.',
                                'Gebäudeformen und Gelände werden beim Erstellen aus Hessens offenen Geodaten geladen. Fassaden und Grundstücksdetails bleiben angenähert.',
-                               'Brücken, Tunnel und private Wege sind ausgeschlossen. Keine Verkehrsregeln oder Fahrberechtigung für die reale Straße ableiten.'])
+                               'Private Wege sind ausgeschlossen. Brücken und Tunnel erhalten abgeleitete Höhen und Bauwerksformen. Keine Fahrberechtigung für die reale Straße ableiten.'])
         if route['length_m'] > LOCAL_ROUTING_M:
             from roadtoassetto.long_track import resample_route, plan_sections
             try:
@@ -504,7 +503,7 @@ class GeoService:
                      created_at=datetime.now(timezone.utc).isoformat())
         route.setdefault('warnings', []).extend([
             'Straßenverlauf aus OpenStreetMap; keine vermessenen Fahrbahnränder. Fassaden bleiben angenähert.',
-            'Amtliche Daten und Bauwerke werden vor dem Bau abschnittsweise geprüft. Tunnel und Brücken sind noch nicht exportierbar.',
+            'Amtliche Daten und Bauwerke werden vor dem Bau abschnittsweise geprüft. Brücken- und Tunnelhöhen werden aus DGM/DOM und Zufahrten abgeleitet; Bauwerksformen sind typisiert.',
             'Start und Ziel sind in Hessen geprüft; der gesamte Korridor benötigt lückenlose Hessische Geodaten.',
             'Speicherangaben sind grobe Schätzungen; Gebäudezahl und Luftbilder beeinflussen den tatsächlichen Bedarf.'])
         _json_write(self.routes / (route['id'] + '.json'), route)
@@ -530,6 +529,29 @@ class GeoService:
                   ('SUBSET', f'{axis[1]}({bounds[1]},{bounds[3]})')]
         if kind == 'dop':
             params.append(('SCALEFACTOR', '1'))
+        reused_from=None
+        if not path.is_file():
+            # Replanning or resuming can request the same official pixels in
+            # another section. Reuse a containing native raster without a new
+            # provider call; the normal projection/nodata checks still apply.
+            filename={'dgm':'dgm1.tif','dop':'ortho.tif','dom':'dom1.tif'}[kind]
+            for candidate in (self.cache/'inputs').glob('**/'+filename):
+                if candidate==path:continue
+                try:
+                    with rasterio.open(candidate) as source:
+                        if source.crs is None or source.crs.to_epsg()!=25832 or not _contains(list(source.bounds),bounds):continue
+                        window=rasterio.windows.from_bounds(*bounds,transform=source.transform).round_offsets().round_lengths()
+                        profile=source.profile.copy()
+                        profile.update(width=int(window.width),height=int(window.height),transform=source.window_transform(window))
+                        path.parent.mkdir(parents=True,exist_ok=True)
+                        with rasterio.open(path,'w',**profile) as target:
+                            for _,block in target.block_windows(1):
+                                src=rasterio.windows.Window(block.col_off+window.col_off,block.row_off+window.row_off,block.width,block.height)
+                                target.write(source.read(window=src),window=block)
+                    reused_from=_digest(candidate)
+                    break
+                except rasterio.errors.RasterioError:
+                    continue
         if not path.is_file():
             content = self._request_bytes(url, params=params, max_bytes=240_000_000 if kind == 'dop' else 16_000_000, timeout=180)
             if content[:2] not in (b'II', b'MM'):
@@ -558,6 +580,7 @@ class GeoService:
                           'resolution_m': list(raster.res), 'width': raster.width, 'height': raster.height,
                           'bytes': temporary.stat().st_size, 'sha256': _digest(temporary),
                           'recorded_at_utc': datetime.now(timezone.utc).isoformat()}
+                if reused_from:record['cropped_from_cached_source_sha256']=reused_from
             if temporary != path:
                 temporary.replace(path)
             return record
@@ -585,7 +608,7 @@ class GeoService:
             # Count actual members, verify IDs, and probe after a full last page.
             reported = document.attrib.get('numberMatched', 'unknown')
             if reported.isdigit() and int(reported) > MAX_BUILDINGS:
-                raise GeoError('Mehr als 1000 Gebäude im Ausschnitt. Bitte einen kleineren Abschnitt wählen.', 'too_many_buildings')
+                raise GeoError(f'Mehr als {MAX_BUILDINGS} Gebäude im Ausschnitt. Bitte einen kleineren Abschnitt wählen.', 'too_many_buildings')
             if len(members) > count or start + len(members) > MAX_BUILDINGS:
                 raise GeoError('Der Gebäudedatenausschnitt ist zu groß oder wurde abgeschnitten.', 'lod2_truncated')
             for member in members:
@@ -627,11 +650,14 @@ class GeoService:
                 progress('OSM-Straßen und Umgebung laden', 10)
                 context = self.cache / 'osm' / (route.get('context_key', 'missing') + '.osm')
                 existing = route.get('context_bounds_utm', [0, 0, 0, 0])
+                required=route.get('context_required_bounds_utm',bounds)
                 if (not context.is_file() or _digest(context) != route['context_sha256']
-                        or bounds[0] < existing[0] or bounds[1] < existing[1] or bounds[2] > existing[2] or bounds[3] > existing[3]):
-                    _, content = self._osm(route['bounds'])
+                        or required[0] < existing[0] or required[1] < existing[1] or required[2] > existing[2] or required[3] > existing[3]):
+                    actual_key, content = self._osm(_wgs_bounds(required))
+                    context_provider=json.loads((self.cache/'osm'/(actual_key+'.json')).read_text()).get('provider',self.overpass)
                 else:
                     content = context.read_bytes()
+                    context_provider=route.get('context_provider') or self.overpass
                 (cache / 'area.osm').write_bytes(content)
                 _json_write(cache / 'road_ways.json', route['ways'])
                 _json_write(cache / 'bounds.json', bounds)
@@ -657,6 +683,9 @@ class GeoService:
                 _json_write(cache / 'retrieval.json', {'recorded_at_utc': datetime.now(timezone.utc).isoformat(),
                             'route_id': route_id, 'sources': sources, 'osm': {'provider': 'OpenStreetMap contributors',
                             'license': 'ODbL-1.0', 'url': 'https://www.openstreetmap.org/copyright',
+                            'service':context_provider,'context_bounds_utm32':required,
+                            'context_sha256':hashlib.sha256(content).hexdigest(),
+                            'regional_source':route.get('regional_source'),
                             'source_way_ids': route['source_way_ids']}, 'warnings': warnings})
                 names = ('area.osm', 'road_ways.json', 'bounds.json', 'dgm1.tif', 'ortho.tif', 'buildings_lod2.gml',
                          'dom1.tif', 'dom1_source.json', 'visual_sources.json', 'retrieval.json')

@@ -126,7 +126,9 @@ def prepare(root: Path, config: dict):
         if alignment.get('applied'):
             xy[[0,-1]]=xy_original[[0,-1]]
     line = LineString(xy)
-    if not line.is_simple:
+    codes=np.asarray(shared.get('structure_codes',np.zeros(len(xy))),dtype=np.int8) if shared else np.zeros(len(xy),dtype=np.int8)
+    has_structures=bool(np.any(codes))
+    if not line.is_simple and not has_structures:
         raise ValueError('Interpolated road crosses itself')
     if not shared and max(LineString(xy_original).distance(__import__('shapely').Point(p)) for p in xy) > 1.5:
         raise ValueError('Road interpolation deviates too far from source')
@@ -147,6 +149,8 @@ def prepare(root: Path, config: dict):
     left_edge = xy + left * half[:,None]
     right_edge = xy - left * half[:,None]
     road_polygon = Polygon(np.vstack([left_edge, right_edge[::-1]]))
+    if not road_polygon.is_valid and has_structures:
+        road_polygon=line.buffer(float(half.max()),cap_style='flat')
     if not road_polygon.is_valid:
         raise ValueError('Road width creates overlapping edges')
     origin = np.asarray(shared['origin_utm32'],dtype=float) if shared else xy.mean(axis=0)
@@ -256,6 +260,9 @@ def prepare(root: Path, config: dict):
     strip('1SHOULDER_RIGHT',-half[:,None]+np.array([-.4,-.2,0]),shoulder_mat,y_offset=-.015)
 
     road_profile=RoadGroundProfile(xy,road_y,half,crossfall=crossfall,source_sampler=dem)
+    from roadtoassetto.structures import StructureGround,span_polygons,build_structures
+    structure_area=span_polygons(xy,half,codes) if has_structures else Polygon()
+    if has_structures:road_profile=StructureGround(road_profile,xy,codes)
     bounds=json.loads((data_dir/'bounds.json').read_text())
     # Resolve the shared street/building contact elevations before terrain is
     # triangulated. This avoids a separate wavy DGM strip behind each sidewalk.
@@ -270,6 +277,8 @@ def prepare(root: Path, config: dict):
         aerial=street_aerial,data_dir=data_dir,edge_y=road_y-crossfall*half,
         quality=config.get('scenery_quality','high'))
     street_surfaces=street_plan['paving_sections']
+    if has_structures:
+        street_surfaces[:]=[s for s in street_surfaces if not Polygon(s['xy']).intersects(structure_area)]
     connection_plan=plan_house_connections(data_dir,line,road_polygon,bounds,street_surfaces,
         lambda points:road_profile(points,dem(points))-.08,other_roads=street_context['other_roads'])
     from roadtoassetto.hillside import plan_hillside
@@ -278,11 +287,15 @@ def prepare(root: Path, config: dict):
         other_roads=street_context['other_roads'],existing_plan=connection_plan)
     connection_plan=hillside_plan.get('remaining_connection_plan',connection_plan)
     (data_dir/'hillside_plan.json').write_text(json.dumps(hillside_plan,indent=2,allow_nan=False),encoding='utf-8')
-    flatten=StreetGroundProfile(road_profile,street_surfaces,road_polygon,
+    protected=protected_road_surfaces(scene,origin,height_origin)
+    if has_structures:
+        from shapely import points as shape_points, intersects
+        protected=protected[~intersects(structure_area,shape_points(protected[:,:,:2].mean(axis=1)))]
+    flatten=StreetGroundProfile(road_profile,street_surfaces,road_polygon.difference(structure_area),
         contact_surfaces=connection_plan['contact_surfaces'],
         foundation_surfaces=connection_plan['foundation_surfaces'],source_sampler=dem,
         hillside_surfaces=hillside_plan['terrain_surfaces'],
-        protected_surfaces=protected_road_surfaces(scene,origin,height_origin),blend=.8)
+        protected_surfaces=protected,blend=.8)
     ground_stats=build_terrain_mesh(bounds,config['terrain_spacing_m'],flatten,dem,ac,
                                     add_mesh,terrain_mat,ortho_bounds,scene=scene)
     # House bases must meet the same triangles the game renders and collides
@@ -324,6 +337,16 @@ def prepare(root: Path, config: dict):
                                      ground_sampler,quality=config.get('scenery_quality','high')))
     from roadtoassetto.road_markings import build_road_markings
     marking_stats=build_road_markings(data_dir,textures,scene,material,add_mesh,ac)
+    structure_stats={}
+    if has_structures:
+        from roadtoassetto.structures import clear_structure_corridors
+        clear_structure_corridors(scene,xy,road_y,half,codes,origin,height_origin)
+        section=config.get('_section',{})
+        core=(section['core_start']-section['halo_start'],section['core_end']-section['halo_start']) if section else None
+        structure_stats=build_structures(xy,road_y,left,half,distance,codes,ac,add_mesh,material,dem,core)
+    if shared:
+        from roadtoassetto.structures import build_context_bridges
+        structure_stats.update(build_context_bridges(data_dir,xy,road_y,{way['id'] for way in ways},ac,add_mesh,material,dem,bounds))
 
     # Physical barriers across the ends clearly mark this finite test area.
     section=config.get('_section',{})
@@ -372,6 +395,7 @@ def prepare(root: Path, config: dict):
     metadata.update(road_wear_stats)
     metadata.update(junction_stats)
     metadata.update(marking_stats)
+    metadata.update(structure_stats)
     metadata['road_crossfall']={'slope':crossfall,'profile':'symmetric crown',
         'source':'Typical drainage construction profile; no local crossfall survey',
         'measured':False}

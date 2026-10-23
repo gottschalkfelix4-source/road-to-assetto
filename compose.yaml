@@ -14,6 +14,8 @@ services:
       - roadtoassetto-data:/data
     environment:
       ROADTOASSETTO_DATA_DIR: /data
+      ROADTOASSETTO_SECURE_COOKIE: ${ROADTOASSETTO_SECURE_COOKIE:-0}
+      ROADTOASSETTO_OSM_MODE: ${ROADTOASSETTO_OSM_MODE:-auto}
       ROADTOASSETTO_GEOCODER_URL: ${ROADTOASSETTO_GEOCODER_URL:-https://nominatim.openstreetmap.org}
       ROADTOASSETTO_OVERPASS_URL: ${ROADTOASSETTO_OVERPASS_URL:-https://overpass-api.de/api/interpreter}
       ROADTOASSETTO_ROUTER_URL: ${ROADTOASSETTO_ROUTER_URL:-https://router.project-osrm.org}

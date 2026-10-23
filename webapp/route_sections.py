@@ -26,12 +26,8 @@ def _message(tags, chainage, reason):
 
 def _check_tags(tags, chainage):
     inactive = ('no', '0', 'false', '')
-    if tags.get('bridge', 'no') not in inactive:
-        raise GeoError(_message(tags, chainage, 'Diese Route führt über eine Brücke. Dafür fehlt noch ein eigenes Höhen- und Tragwerksmodell.'), 'unsupported_bridge', 422)
-    if tags.get('tunnel', 'no') not in inactive:
-        raise GeoError(_message(tags, chainage, 'Diese Route führt durch einen Tunnel. Dafür fehlt noch ein eigenes Höhen- und Tunnelmodell.'), 'unsupported_tunnel', 422)
-    if tags.get('layer', '0') not in ('0', '') or tags.get('covered', 'no') not in inactive:
-        raise GeoError(_message(tags, chainage, 'Die Straße liegt auf einer gesonderten Ebene oder in einer überdachten Passage. Sie kann noch nicht zuverlässig aus dem Geländemodell erzeugt werden.'), 'unsupported_structure', 422)
+    # Preserve bridge/tunnel/covered/layer tags for the global 3-D profile.
+    # A layer alone specifies ordering, not a height or construction type.
     if any(tags.get(key) in ('no', 'private', 'agricultural', 'forestry') for key in ('access', 'vehicle', 'motor_vehicle', 'motorcar')):
         raise GeoError(_message(tags, chainage, 'Die OSM-Daten kennzeichnen diese Straße als für Autos gesperrt oder privat.'), 'unsupported_access', 422)
     if tags.get('highway') not in ('motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link',
@@ -109,7 +105,7 @@ def section_route(fullroute, xy, section, osmcontent):
                 continue
             # Exact adjacent routing node IDs resolve nearby parallel roads.
             # Distance/orientation provide the explicit fallback for stale IDs.
-            score = distance + .5 * (1 - direction)
+            score = distance + 3. * (1 - direction)
             candidates.append((not record['annotated'], score, record['way_id'], int(item), distance))
         if not candidates:
             raise GeoError(_message({}, distances[index], 'Die Route weicht von den aktuellen OSM-Straßen ab. Bitte die Route neu planen oder den Verlauf prüfen.'), 'route_osm_mismatch', 422)
@@ -124,7 +120,8 @@ def section_route(fullroute, xy, section, osmcontent):
                 first, second = records[chosen[3]], records[competing[0][3]]
                 connected = min(float(np.linalg.norm(left - right)) for left in (first['a'], first['b'])
                                 for right in (second['a'], second['b'])) < .05
-                if not connected:
+                parallel=abs(float(np.dot(first['unit'],second['unit'])))>.95
+                if not connected and parallel:
                     raise GeoError(_message({}, distances[index], 'Die Route liegt zwischen mehreren Straßen. Die genaue Fahrbahn ist anhand der OSM-Daten nicht eindeutig.'), 'route_osm_ambiguous', 422)
         record = records[chosen[3]]
         _check_tags(record['tags'], distances[index])

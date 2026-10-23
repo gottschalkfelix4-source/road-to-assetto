@@ -86,7 +86,7 @@ class SyntheticGeo:
     def prepare_route(self, identifier, destination, progress=None, *, section_route, section_index):
         self.prepared.append((identifier, section_index))
         destination.mkdir(parents=True, exist_ok=True)
-        (destination / 'textures').mkdir()
+        (destination / 'textures').mkdir(exist_ok=True)
         Image.new('RGB', (2, 2), (90, 90, 90)).save(destination / 'textures/road.png')
         Image.new('RGB', (2, 2), (100, 110, 95)).save(destination / 'textures/ortho.jpg')
         (destination / 'area.osm').write_bytes(b'<osm version="0.6"/>')
@@ -104,7 +104,7 @@ class SyntheticGeo:
 
 def synthetic_section(route, xy, section, content):
     return {'id': route['id'], 'bounds_utm': section['bounds'], 'source_way_ids': [42],
-            'ways': [{'id': 42}], 'warnings': [], 'bounds': route['bounds']}
+            'ways': [{'id': 42,'tags':{'highway':'residential'},'nodes':[-section['halo_start']-1,-section['halo_end']-1]}], 'warnings': [], 'bounds': route['bounds']}
 
 
 def synthetic_scene(root, cfg):
@@ -155,6 +155,7 @@ class LongBuildTests(unittest.TestCase):
         parent = ROOT / 'test-results'
         parent.mkdir(exist_ok=True)
         self.resources = ExitStack()
+        self.resources.enter_context(patch.object(longbuild, 'prepare_regional', return_value=None))
         self.addCleanup(self.resources.close)
         self.folder = Path(self.resources.enter_context(tempfile.TemporaryDirectory(
             prefix='long-build-test-', dir=parent)))
@@ -235,6 +236,18 @@ class LongBuildTests(unittest.TestCase):
             self.assertEqual(record['sources_scope'], 'first_section')
             self.assertEqual(len(record['section_source_records']), 3)
 
+    def test_resume_reuses_verified_scenes_and_rebuilds_corrupted_scene(self):
+        request = selection(self.route, 1000., 2400.)
+        self.run_fixture(request)
+        self.progress.clear()
+        self.run_fixture(request)
+        self.assertEqual(sum('Zwischenmodell wiederverwenden' in s for s,p in self.progress), 2)
+        (self.folder/'sections/0001/data/altenhain/scene.json').write_text('{}')
+        self.progress.clear()
+        self.run_fixture(request)
+        self.assertEqual(sum('Zwischenmodell wiederverwenden' in s for s,p in self.progress), 1)
+        self.assertGreater(json.loads((self.folder/'sections/0001/data/altenhain/scene.json').read_text())['metadata']['length_m'], 600)
+
     def test_storage_failure_precedes_any_provider_access(self):
         with patch.object(longbuild.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)):
             with self.assertRaises(GeoError) as caught:
@@ -298,8 +311,10 @@ class LongBuildTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01}, daemon=True)
             thread.start()
             try:
+                from scripts.test_auth import authenticated_headers
+                from urllib.request import Request
                 with build_opener(ProxyHandler({})).open(
-                    f'http://127.0.0.1:{server.server_port}/api/catalog', timeout=5) as response:
+                    Request(f'http://127.0.0.1:{server.server_port}/api/catalog',headers=authenticated_headers(server)), timeout=5) as response:
                     data = json.load(response)
                 self.assertIsNone(data['discovery']['max_length_m'])
                 self.assertEqual(data['discovery']['min_segment_m'], 120)

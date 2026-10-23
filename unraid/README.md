@@ -6,6 +6,12 @@ Start-/Ziel-Auswahl für neue Routen in **Hessen**, auch über 50 km. Der vorber
 und die Materialien mit; ein Quellcode-Checkout auf Unraid ist nicht nötig.
 Neue Routen laden ihre offenen Geodaten während des Baus aus dem Internet.
 
+Für lange Routen ab zehn Abschnitten wird einmalig der etwa 330 MB große
+Hessen-OSM-Datensatz von Geofabrik geladen und sieben Tage im Appdata-Cache
+wiederverwendet. Die erweiterte Einstellung **OSM-Datenquelle** bietet `auto`
+(Standard), `regional` und `overpass`. Der regionale Import benötigt zusätzlich
+Arbeitsspeicher für den Knotenindex; das 8-GiB-Containerlimit bleibt empfohlen.
+
 - Image: `ghcr.io/gottschalkfelix4-source/road-to-assetto:latest`
 - [Unraid-Vorlage herunterladen](https://raw.githubusercontent.com/gottschalkfelix4-source/road-to-assetto/main/unraid/roadtoassetto.xml)
 - [Quellcode und Fehlerberichte](https://github.com/gottschalkfelix4-source/road-to-assetto)
@@ -56,7 +62,12 @@ fi
 3. Host-Port und Appdata-Pfad prüfen, anschließend **Apply** wählen.
 4. Nach dem Start über das Containersymbol **WebUI** öffnen, standardmäßig
    unter `http://UNRAID-IP:8765/`.
-5. Für einen ersten Test im Browser einen kurzen Abschnitt der Langstraße
+5. Den Einrichtungscode aus `/mnt/user/appdata/roadtoassetto/bootstrap-code.txt`
+   im Unraid-Terminal lesen und damit das erste Konto im Browser erstellen.
+   Dieses Konto übernimmt vorhandene Strecken und kann Freunde einladen.
+   Einladungen sind sieben Tage gültig und einmal verwendbar. Strecken bleiben
+   für ihren Ersteller privat, einschließlich Vorschauen und Downloads.
+6. Für einen ersten Test im Browser einen kurzen Abschnitt der Langstraße
    erzeugen oder eine Adresse in Hessen suchen und eine eigene Straßenroute
    wählen. Danach Vorschauen und Strecken-ZIP öffnen.
 
@@ -98,7 +109,7 @@ Speicherschätzung. Das ZIP enthält eine zusammenhängende Strecke, die einmal
 in Content Manager importiert wird. Die Vorschaubilder zeigen bei langen Routen
 einen ausgewählten Abschnitt.
 
-Private Wege und nicht unterstützte Brücken beziehungsweise Tunnel werden bei
+Private Wege und nicht eindeutig auflösbare Bauwerkshöhen werden bei
 der Datenprüfung abgewiesen. Lange Aufträge können erheblich länger dauern und
 mehr Festplattenspeicher benötigen. Auch die spätere Leistung in Assetto Corsa
 hängt von Streckenlänge und Bebauung ab. Für den ersten eigenen Test 200–500 m

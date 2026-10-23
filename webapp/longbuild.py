@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import time
 import zipfile
 
 import numpy as np
@@ -19,6 +20,7 @@ from roadtoassetto.prepare import prepare, Heights
 from roadtoassetto.scenery import select_route
 from webapp.catalog import ROOT, config
 from webapp.geodata import GeoError, TO_UTM, TO_WGS, _digest, _wgs_bounds, _json_write, estimate_storage
+from webapp.regional import prepare_regional
 
 
 def selected_geometry(route, request):
@@ -29,7 +31,8 @@ def selected_geometry(route, request):
     end=min(float(request['end_m']),total)
     selected,_=select_route(raw,float(request['start_m']),end)
     lon,lat=TO_WGS.transform(selected[:,0],selected[:,1])
-    return resample_route(np.c_[lat,lon].tolist())
+    return resample_route(np.c_[lat,lon].tolist(),allow_structures=True,
+                          minimum_radius_m=float(request['road_width_m'])/2+.6)
 
 
 def storage_estimate(sections):
@@ -83,25 +86,44 @@ def run_long(folder,request,route,geo,progress):
     xy=selected_geometry(route,request)
     sections=plan_sections(xy)
     estimates=storage_estimate(sections)
+    existing=sum(p.stat().st_size for p in folder.rglob('*') if p.is_file() and not p.is_symlink())
     # Fail before starting gigabytes of downloads, without imposing a route length cap.
-    if shutil.disk_usage(folder).free<estimates['workspace_bytes']:
+    remaining=max(256*1024**2,estimates['workspace_bytes']-existing)
+    if shutil.disk_usage(folder).free<remaining:
         raise GeoError(f'Für diese Auswahl werden grob {estimates["workspace_bytes"]/2**30:.1f} GiB Arbeitsraum benötigt; auf dem Datenlaufwerk ist weniger frei.', 'insufficient_storage',422)
     cfg=config();source=ROOT/cfg['data_dir']
     cfg.update(id='rtac_'+folder.name,name=request['name'],city='Hessen',road_name=route['name'],
                road_width_m=request['road_width_m'],scenery_quality=request['scenery_quality'],
                vegetation_density=request['vegetation_density'],allow_outside_photo_overrides=False,
                geotags=[str(v) for v in reversed(TO_WGS.transform(*xy[0]))])
-    count=len(sections);raw_heights=np.full(len(xy),np.nan);inputs=[]
+    count=len(sections);raw_heights=np.full(len(xy),np.nan);surface_heights=np.full(len(xy),np.nan);inputs=[]
     tangent=np.gradient(xy,axis=0);tangent/=np.linalg.norm(tangent,axis=1)[:,None]
     left=np.c_[-tangent[:,1],tangent[:,0]]
+    def acquire(call,label,percent):
+        for attempt in range(3):
+            try:return call()
+            except GeoError as error:
+                if error.status!=503 or attempt==2:raise
+                progress(label+f': Quelldienst ausgelastet, erneuter Versuch {attempt+2}/3',percent)
+                time.sleep((10,30)[attempt])
+    regional=prepare_regional(geo.cache,sections,progress)
     # Validate each small route window before fetching its large aerial/building data.
     for section in sections:
         i=section['index'];label=f'Abschnitt {i+1}/{count}'
         progress(label+': Straßen und Bauwerke prüfen',5+round(20*i/count))
-        key,content=geo._osm(_wgs_bounds(section['bounds']))
+        window=xy[section['halo_start']:section['halo_end']+1]
+        osm_bounds=np.r_[np.floor(window.min(axis=0)-130),np.ceil(window.max(axis=0)+130)].tolist()
+        # Rendered scenery is clipped to 120 m. A 130 m OSM window retains its
+        # complete context while allowing cached extracts to survive small
+        # curve/section changes. DEM/imagery/buildings keep their 160 m halo.
+        key,content=regional[i] if regional is not None else acquire(lambda:geo._osm(_wgs_bounds(osm_bounds)),label,5+round(20*i/count))
         selected=section_route(route,xy,section,content)
-        selected.update(context_key=key,context_bounds_utm=section['bounds'],
-                        context_sha256=hashlib.sha256(content).hexdigest())
+        context_record=geo.cache/'osm'/(key+'.json')
+        context_provider=json.loads(context_record.read_text()).get('provider') if context_record.is_file() else getattr(geo,'overpass',None)
+        selected.update(context_key=key,context_bounds_utm=osm_bounds,context_required_bounds_utm=osm_bounds,
+                        context_sha256=hashlib.sha256(content).hexdigest(),context_provider=context_provider)
+        if context_record.is_file():
+            selected['regional_source']=json.loads(context_record.read_text()).get('regional_source')
         inputs.append(selected)
         # A selected range can have different geometry with the same index.
         # Include a deterministic geometry key to keep immutable source windows separate.
@@ -110,18 +132,34 @@ def run_long(folder,request,route,geo,progress):
         cache=geo.cache/'inputs'/selected['_cache_id']/f'section-{i:04d}'
         cache.mkdir(parents=True,exist_ok=True)
         progress(label+': amtliche Geländehöhen laden',6+round(20*i/count))
-        geo._raster(cache/'dgm1.tif',section['bounds'],'dgm')
+        acquire(lambda:geo._raster(cache/'dgm1.tif',section['bounds'],'dgm'),label,6+round(20*i/count))
         dem=Heights(cache/'dgm1.tif')
         a,b=section['core_start'],section['core_end']+1
         raw_heights[a:b]=np.median([dem(xy[a:b]+left[a:b]*offset) for offset in (-.8,0,.8)],axis=0)
         del dem
-    profile=build_profile(xy,raw_heights,request['road_width_m'],cfg.get('road_crossfall',.025))
+        from roadtoassetto.structures import structure_kind
+        if any(structure_kind(way['tags'])=='bridge' for way in selected['ways']):
+            progress(label+': Brückenoberfläche aus DOM1 laden',6+round(20*i/count))
+            acquire(lambda:geo._raster(cache/'dom1.tif',section['bounds'],'dom'),label,6+round(20*i/count))
+            dom=Heights(cache/'dom1.tif')
+            surface_heights[a:b]=np.percentile([dom(xy[a:b]+left[a:b]*offset) for offset in (-1.,-.5,0,.5,1.)],25,axis=0)
+            del dom
+    from roadtoassetto.structures import collect_spans,resolve_heights
+    codes,spans=collect_spans(inputs,len(xy))
+    road_heights,structures=resolve_heights(xy,raw_heights,spans,surface_heights)
+    profile=build_profile(xy,raw_heights,request['road_width_m'],cfg.get('road_crossfall',.025),road_heights=road_heights,structure_codes=codes)
     progress('Durchgehende Fahrbahn und Geländegrenzen vorbereiten',27)
     ownership=plan_ownership(profile,sections)
     _json_write(folder/'section-plan.json',{'sections':sections,'estimates':estimates,'length_m':float(profile['distance'][-1])})
     track=folder/'build'/cfg['id'];exporter=MultiModelExporter(track,cfg['id'],profile,sections)
     first_metadata=None;totals={};ai_run=None;warnings=list(route.get('warnings',[]))
     shared_assets=folder/'shared-assets'
+    fingerprint=hashlib.sha256()
+    for module in sorted((ROOT/'roadtoassetto').glob('*.py'))+sorted((ROOT/'webapp').glob('*.py')):
+        fingerprint.update(module.read_bytes())
+    fingerprint.update(json.dumps(cfg,sort_keys=True).encode())
+    fingerprint.update(xy.tobytes());fingerprint.update(profile['road_y'].tobytes());fingerprint.update(codes.tobytes())
+    signature=fingerprint.hexdigest()
     # /app and /data are different mounts in Docker: copy once across that
     # boundary, then link per-section read-only inputs on the same data volume.
     copy_materials(source,shared_assets)
@@ -134,25 +172,35 @@ def run_long(folder,request,route,geo,progress):
         i=section['index'];label=f'Abschnitt {i+1}/{count}'
         section_root=folder/'sections'/f'{i:04d}';data=section_root/cfg['data_dir']
         base=30+round(60*i/count)
-        provenance=geo.prepare_route(selected['_cache_id'],data,
+        provenance=acquire(lambda:geo.prepare_route(selected['_cache_id'],data,
             progress=lambda stage,p:progress(label+': '+stage,base+round(15*p/(100*count))),
-            section_route=selected,section_index=i)
+            section_route=selected,section_index=i),label,base)
         copy_materials(shared_assets,data)
         section_cfg=configure_section(cfg,profile,section,ownership=domain)
         section_cfg['_source_way_ids']=selected['source_way_ids']
         section_cfg['source_route']={k:route[k] for k in ('id','name','length_m','source','warnings') if k in route}
         (section_root/'tracks').mkdir(parents=True,exist_ok=True)
         _json_write(section_root/'tracks/altenhain.json',section_cfg)
-        progress(label+': Straße, Gelände und Gebäude bauen',base+round(20/count))
-        scene=prepare(section_root,section_cfg)
-        scene=finalize_section(scene,profile,section,domain)
+        checkpoint=section_root/'scene-checkpoint.json'
+        reused=False
+        if checkpoint.is_file() and (data/'scene.json').is_file():
+            saved=json.loads(checkpoint.read_text())
+            if saved.get('signature')==signature and saved.get('sha256')==_digest(data/'scene.json'):
+                progress(label+': geprüftes Zwischenmodell wiederverwenden',base+round(20/count))
+                scene=json.loads((data/'scene.json').read_text(encoding='utf-8'));reused=True
+        if not reused:
+            progress(label+': Straße, Gelände und Gebäude bauen',base+round(20/count))
+            scene=prepare(section_root,section_cfg)
+            scene=finalize_section(scene,profile,section,domain)
         if first_metadata is None:first_metadata=dict(scene['metadata'])
-        for field in ('buildings','hillside_retaining_assemblies','hillside_staircases','hillside_driveways'):
+        for field in ('buildings','hillside_retaining_assemblies','hillside_staircases','hillside_driveways',
+                      'bridge_segments','tunnel_segments','context_bridges','structure_piers','tunnel_portals'):
             totals[field]=totals.get(field,0)+scene['metadata'].get(field,0)
         warnings.extend(w for w in provenance['warnings'] if w not in warnings)
         # Preserve the preview before the export namespaces the KN5 textures.
         _json_write(data/'scene.json',scene)
         _json_write(data/'manifest.json',scene['metadata'])
+        _json_write(checkpoint,{'signature':signature,'sha256':_digest(data/'scene.json')})
         progress(label+': Modell exportieren und Übergang prüfen',base+round(45/count))
         exporter.write_section(scene,section,data/'textures')
         destination=track/'provenance'/'sections'/f'{i:04d}';destination.mkdir(parents=True,exist_ok=True)
@@ -163,6 +211,8 @@ def run_long(folder,request,route,geo,progress):
     models=exporter.finish()
     metadata=aggregate_metadata(first_metadata,profile,models)
     metadata.update(totals,sections_count=count,preview_scope='representative_section')
+    metadata.update(bridges_count=sum(s['kind']=='bridge' for s in structures),
+                    tunnels_count=sum(s['kind']=='tunnel' for s in structures))
     metadata['source_route']={k:route[k] for k in ('id','name','length_m','coordinates','bounds','source') if k in route}
     metadata['source_route']['warnings']=warnings
     cfg['source_route']=metadata['source_route']
@@ -172,6 +222,8 @@ def run_long(folder,request,route,geo,progress):
     _json_write(track/'provenance/routing.json',{k:route.get('routing',{}).get(k) for k in
         ('provider','attribution','policy_url','exclude','provider_distance_m','data_version')})
     _json_write(track/'provenance/section-plan.json',{'sections':sections,'models':models})
+    _json_write(track/'provenance/structures.json',{'structures':structures,'crossings':profile['crossings'],
+        'accuracy':'OSM extents; inferred approach/DOM-constrained heights and generic construction, not a structural survey.'})
     longitude,latitude=TO_WGS.transform(xy[:,0],xy[:,1])
     selection={'start_m':request['start_m'],'end_m':request['end_m'],'planned_length_m':route['length_m'],
                'generated_length_m':float(profile['distance'][-1])}
