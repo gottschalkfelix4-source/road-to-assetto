@@ -231,6 +231,7 @@
   function renderDetail(job) {
     if (!job) {ui['job-detail'].hidden=true;return;}
     ui['job-detail'].hidden=false;
+    renderMetrics(job);
     $('reuse-job').disabled=!job.settings || state.reusing;
     $('retry-job').hidden=!['failed','cancelled'].includes(job.status);
     $('share-job').disabled=false;
@@ -290,6 +291,45 @@
         if (ui['job-preview'].src!==preview) {ui['job-preview'].hidden=false;ui['job-preview'].src=preview;}
       } else {ui['job-preview'].hidden=true;ui['job-preview'].removeAttribute('src');}
     }
+  }
+
+  const durationLabel=value=>{
+    if(!Number.isFinite(value))return '–';
+    if(value<1)return `${Math.round(Math.max(0,value)*1000)} ms`;
+    const seconds=Math.floor(value);
+    return seconds<60?`${seconds} s`:seconds<3600?`${Math.floor(seconds/60)} min ${seconds%60} s`:`${Math.floor(seconds/3600)} h ${Math.floor(seconds%3600/60)} min`;
+  };
+  const bytesLabel=value=>!Number.isFinite(value)?'–':value<1024?`${value} B`:value<1024**2?`${decimal.format(value/1024)} KiB`:value<1024**3?`${decimal.format(value/1024**2)} MiB`:`${decimal.format(value/1024**3)} GiB`;
+  function metricPair(name,value){const row=element('div','');row.append(element('dt','',name),element('dd','',value));return row;}
+  function renderMetrics(job){
+    const m=job.telemetry;
+    $('metrics-empty').hidden=Boolean(m);$('metrics-content').hidden=!m;
+    $('metrics-state').textContent=m?(m.live?'Live':job.status==='running'?'Messung unterbrochen':'Gespeichert'):'';
+    $('metrics-empty').textContent=job.status==='queued'?'Der Auftrag wartet in der Warteschlange. Die Messung beginnt, sobald der Bau startet.':job.status==='running'?'Messwerte werden vorbereitet.':'Für diesen älteren Auftrag wurden keine Messwerte aufgezeichnet.';
+    if(!m)return;
+    const r=m.resources,live=m.live;
+    const rows=[metricPair('Bauzeit dieses Versuchs',durationLabel(m.elapsed_s))];
+    if(r){
+      const cpu=live?r.cpu_percent:r.peak_cpu_percent;
+      rows.push(metricPair(live?'CPU aktuell':'CPU-Spitze',Number.isFinite(cpu)?`${decimal.format(cpu)} %`:'Wird gemessen …'),
+        metricPair(live?'RAM aktuell':'RAM-Spitze',bytesLabel(live?r.rss_bytes:r.peak_rss_bytes)));
+      if(r.memory_limit_bytes)rows.push(metricPair('RAM-Containerlimit',bytesLabel(r.memory_limit_bytes)));
+    }else rows.push(metricPair('CPU / RAM','Nicht verfügbar'));
+    $('metrics-resources').replaceChildren(...rows);
+    $('metrics-attempt').textContent=`Versuch ${m.attempt}${m.attempt>1?` · Insgesamt ${durationLabel(m.total_elapsed_s)} über alle Versuche`:''}${r?` · ${decimal.format(r.cpu_capacity_cores)} verfügbare CPU-Kerne`:''}${!live&&job.status==='running'?' · Letzter Messstand, keine aktuelle Auslastung':''}`;
+    $('metrics-phases').replaceChildren(...(m.phases||[]).filter(p=>p.seconds>=.01||p.key===m.phase).map(p=>{
+      const row=metricPair(p.name,durationLabel(p.seconds));if(live&&p.key===m.phase)row.classList.add('metrics-active');return row;
+    }));
+    $('metrics-inflight').textContent=m.inflight?(live?`${m.inflight.name}: Anfrage läuft seit ${durationLabel(m.inflight.seconds)}, ${bytesLabel(m.inflight.bytes)} empfangen.`:`Letzte offene Anfrage: ${m.inflight.name}.`):live?'Aktuell kein Kartenabruf.':'Kein laufender Kartenabruf.';
+    $('metrics-retries').textContent=`${m.retries||0} automatische Wiederholungen. Wartepausen sind in den Bauphasen separat ausgewiesen.`;
+    const providers=(m.providers||[]).map(p=>{
+      const row=element('tr','');
+      for(const value of [p.name,`${p.requests} / ${p.cache_hits}`,bytesLabel(p.bytes),p.header_samples?durationLabel(p.header_seconds/p.header_samples):'–',durationLabel(p.seconds),p.errors?`${p.errors}${p.last_status?` · zuletzt HTTP ${p.last_status}`:''}`:'0'])row.append(element('td','',value));
+      row.title=`Übertragung: ${durationLabel(p.transfer_seconds)} · längster Abruf: ${durationLabel(p.max_seconds)} · HTTP 429/502/503/504: ${p.temporary_errors}`;
+      return row;
+    });
+    if(!providers.length){const row=element('tr',''),cell=element('td','field-hint','Noch keine Kartenabrufe oder Cache-Zugriffe.');cell.colSpan=6;row.append(cell);providers.push(row);}
+    $('metrics-providers').replaceChildren(...providers);
   }
 
 

@@ -21,6 +21,7 @@ from roadtoassetto.scenery import select_route
 from webapp.catalog import ROOT, config
 from webapp.geodata import GeoError, TO_UTM, TO_WGS, _digest, _wgs_bounds, _json_write, estimate_storage
 from webapp.regional import prepare_regional
+from webapp.telemetry import set_phase,retry_wait
 
 
 def selected_geometry(route, request):
@@ -104,8 +105,8 @@ def run_long(folder,request,route,geo,progress):
             try:return call()
             except GeoError as error:
                 if error.status!=503 or attempt==2:raise
-                progress(label+f': Quelldienst ausgelastet, erneuter Versuch {attempt+2}/3',percent)
-                time.sleep((10,30)[attempt])
+                progress(label+f': Datenabruf vorübergehend fehlgeschlagen, erneuter Versuch {attempt+2}/3',percent)
+                with retry_wait((10,30)[attempt]):time.sleep((10,30)[attempt])
     regional=prepare_regional(geo.cache,sections,progress)
     # Validate each small route window before fetching its large aerial/building data.
     for section in sections:
@@ -191,6 +192,7 @@ def run_long(folder,request,route,geo,progress):
         if not reused:
             progress(label+': Straße, Gelände und Gebäude bauen',base+round(20/count))
             scene=prepare(section_root,section_cfg)
+            set_phase('clip')
             scene=finalize_section(scene,profile,section,domain)
         if first_metadata is None:first_metadata=dict(scene['metadata'])
         for field in ('buildings','hillside_retaining_assemblies','hillside_staircases','hillside_driveways',

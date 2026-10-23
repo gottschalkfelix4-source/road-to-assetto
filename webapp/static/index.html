@@ -86,6 +86,17 @@
       <div class="results-layout"><div id="job-list" class="job-list"><p class="empty-state">Noch keine Strecken gespeichert.</p></div><section id="job-detail" class="job-detail" aria-label="Gewählter Export" hidden>
         <div class="job-detail-heading"><h3 id="job-name"></h3><span id="job-state"></span></div><div class="job-actions"><button id="retry-job" class="secondary compact" type="button" hidden>Bau fortsetzen</button><button id="reuse-job" class="secondary compact" type="button" disabled>Auswahl übernehmen</button><button id="share-job" class="text-button" type="button">Privaten Link kopieren</button><span id="share-feedback" role="status"></span></div><input id="share-url" type="text" readonly aria-label="Link zu dieser Strecke" hidden>
         <div id="job-progress-block"><p id="job-stage" role="status" aria-live="polite"></p><progress id="job-progress" max="100" value="0" aria-label="Fortschritt der Generierung"></progress><div class="progress-caption"><span id="job-progress-text">0 %</span><span>Der Auftrag läuft auf dem Server weiter.</span></div></div>
+        <details id="job-metrics" class="job-metrics" open>
+          <summary>Zeiten und Auslastung <span id="metrics-state"></span></summary>
+          <p id="metrics-empty" class="field-hint"></p>
+          <div id="metrics-content" hidden>
+            <dl id="metrics-resources" class="metrics-resources"></dl>
+            <p id="metrics-attempt" class="field-hint"></p>
+            <div class="metrics-columns"><div><h4>Bauphasen</h4><dl id="metrics-phases" class="metrics-phases"></dl></div><div><h4>Datenabruf</h4><p id="metrics-inflight"></p><p id="metrics-retries" class="field-hint"></p></div></div>
+            <div class="metrics-table-scroll"><table class="metrics-table"><caption>Karten- und 3D-Datenquellen</caption><thead><tr><th scope="col">Quelle</th><th scope="col">Abrufe / Cache</th><th scope="col">Empfangen</th><th scope="col">Antwort Ø</th><th scope="col">Gesamtzeit</th><th scope="col">Fehler</th></tr></thead><tbody id="metrics-providers"></tbody></table></div>
+            <p class="field-hint metrics-explanation">CPU und RAM: dieser Bauprozess einschließlich Renderer. CPU bezieht sich auf die verfügbaren Kerne bzw. das Containerlimit. Antwortzeit: bis zu den HTTP-Headern; Gesamtzeit: einschließlich Download. Die interne Auslastung fremder Datenserver ist nicht einsehbar. Cache zählt wiederverwendete Datenpakete.</p>
+          </div>
+        </details>
         <p id="job-error" class="form-error" hidden></p><div id="job-success" hidden><div class="preview-gallery"><nav id="preview-views" aria-label="Vorschauansicht"></nav><a id="preview-open" target="_blank" rel="noopener"><img id="job-preview" alt="Gerenderte Vorschau der erzeugten Strecke" hidden></a><p id="preview-caption">Vorschauen aus dem erzeugten 3D-Modell. Zum Vergrößern anklicken.</p></div><div class="finished-layout"><div><p id="job-summary"></p><p id="job-section-note" class="field-hint" hidden></p><details id="job-source-notes" class="route-notes" hidden><summary id="job-source-title">Hinweise zu den Geodaten</summary><ul id="job-source-warnings" class="route-warnings"></ul></details><a id="job-download" class="primary download-button" download>Strecke herunterladen</a><p class="install-help">ZIP in Content Manager ziehen. Danach unter <strong>Training / Practice</strong> auswählen.</p></div></div></div>
       </section></div>
     </section>

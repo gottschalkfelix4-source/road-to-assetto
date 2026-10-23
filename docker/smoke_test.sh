@@ -51,8 +51,16 @@ assert len(read('/api/templates/altenhain/map.jpg')) > 10000
 assert len(read('/api/templates/altenhain/preview.png')) > 10000
 assert b'Road' in read('/')
 assert json.loads(read('/api/jobs')) == {'jobs': []}
+from webapp.telemetry import BuildMonitor, read_metrics
+measurement=Path('/data/runtime-metrics-check');measurement.mkdir()
+with BuildMonitor(measurement):
+    metrics=read_metrics(measurement,'running')
+    assert metrics['live']
+    assert 0 < metrics['resources']['cpu_capacity_cores'] <= 4
+    assert metrics['resources']['memory_limit_bytes'] == 8 * 1024**3
+assert not read_metrics(measurement,'succeeded')['live']
 Path('/data/persistence-check.txt').write_text('survives restart', encoding='utf-8')
-print('Bundled dataset, catalog, images, UI and UID 99:100 verified')
+print('Bundled dataset, catalog, images, UI, private metrics, cgroup limits and UID 99:100 verified')
 PY
 docker restart "$container" >/dev/null
 docker exec "$container" python -c "from pathlib import Path; assert Path('/data/persistence-check.txt').read_text() == 'survives restart'; print('Persistent appdata verified')"

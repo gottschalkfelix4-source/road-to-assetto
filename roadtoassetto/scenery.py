@@ -497,6 +497,7 @@ def grow_plant(world, radius, height, rng, batches, bark, leaves, quality, shrub
         # with tree height would turn individual photographed leaves into giant
         # paddles on a tall DOM tree, even with a plausible trunk height.
         count = int(min(1900,300+radius*radius*40)) if quality=='high' else int(min(1150,210+radius*radius*26))
+    locations=[];horizontals=[];verticals=[];widths=[];heights=[]
     for i in range(count):
         # A deformed ellipsoidal volume gives depth; its boundary remains inside
         # the checked crown envelope even after accounting for card corners.
@@ -509,7 +510,7 @@ def grow_plant(world, radius, height, rng, batches, bark, leaves, quality, shrub
                           y * leaf_vertical,
                           math.sin(angle) * radius * spread])
         location = center + local
-        card_width = float(np.clip(radius*rng.uniform(.25,.39),.24,.72 if shrub else 1.05))
+        card_width = min(max(radius*rng.uniform(.25,.39),.24),.72 if shrub else 1.05)
         card_height = min(card_width * rng.uniform(1.05, 1.30), height * .34)
         normal_angle = angle + rng.uniform(-.9, .9)
         # Cards face broadly out from the crown. Radial card *planes* make all
@@ -523,15 +524,31 @@ def grow_plant(world, radius, height, rng, batches, bark, leaves, quality, shrub
         roll = rng.uniform(-1.35,1.35)
         horizontal,vertical=(horizontal*math.cos(roll)+vertical*math.sin(roll),
                              -horizontal*math.sin(roll)+vertical*math.cos(roll))
-        card_normal=np.cross(horizontal,vertical)
-        vertical_half=(card_width*.5*abs(horizontal[1])+card_height*.5*abs(vertical[1])
-                       +card_width*.065*abs(card_normal[1]))
-        fit=min(1.,(height-leaf_bottom)*.48/max(vertical_half,.001))
-        card_width*=fit;card_height*=fit;vertical_half*=fit
-        location[1] = np.clip(location[1],world[1]+leaf_bottom+vertical_half,
-                             world[1]+height-vertical_half)
-        v, f, uv = leaf_card(location, horizontal, vertical, card_width, card_height, i % 2 == 0)
-        batches.append('SHRUB_LEAVES' if shrub else 'TREE_LEAVES', leaves[i % len(leaves)], v, f, uv)
+        locations.append(location);horizontals.append(horizontal);verticals.append(vertical)
+        widths.append(card_width);heights.append(card_height)
+    # Keep every random draw, card and material in its original order. Only the
+    # arithmetic moves into arrays; no LOD or foliage-density reduction.
+    locations=np.asarray(locations);horizontal=np.asarray(horizontals);vertical=np.asarray(verticals)
+    widths=np.asarray(widths);heights=np.asarray(heights)
+    card_normal=np.cross(horizontal,vertical)
+    vertical_half=(widths*.5*np.abs(horizontal[:,1])+heights*.5*np.abs(vertical[:,1])
+                   +widths*.065*np.abs(card_normal[:,1]))
+    fit=np.minimum(1.,(height-leaf_bottom)*.48/np.maximum(vertical_half,.001))
+    widths*=fit;heights*=fit;vertical_half*=fit
+    locations[:,1]=np.clip(locations[:,1],world[1]+leaf_bottom+vertical_half,world[1]+height-vertical_half)
+    horizontal=horizontal*widths[:,None]/2;vertical=vertical*heights[:,None]/2
+    normals=np.cross(horizontal,vertical)
+    # Explicit three-term sum matches the scalar dot product used by leaf_card.
+    normals/=np.sqrt(normals[:,0]**2+normals[:,1]**2+normals[:,2]**2)[:,None]
+    cards=np.stack((locations-horizontal-vertical,locations+horizontal-vertical,
+                    locations+horizontal+vertical,locations-horizontal+vertical,
+                    locations+normals*widths[:,None]*.065),axis=1)
+    cards=np.concatenate((cards,cards),axis=1)
+    _,faces,uv=leaf_card([0.,0.,0.],[1.,0.,0.],[0.,1.,0.],1.,1.)
+    mirrored=uv.copy();mirrored[:,0]=1-mirrored[:,0]
+    for i,vertices in enumerate(cards):
+        batches.append('SHRUB_LEAVES' if shrub else 'TREE_LEAVES',leaves[i%len(leaves)],
+                       vertices,faces,mirrored if i%2==0 else uv)
 
 
 def prism(points, bottom, top, ac):

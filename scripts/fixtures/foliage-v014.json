@@ -1,0 +1,47 @@
+[
+  {
+    "sha256": "277b3a2ff4cff959a3b5df09b045bd659f9280ae3d08a03cc1770d8f681225d2",
+    "counts": [
+      3,
+      6786,
+      5464
+    ],
+    "next_random": 0.7167583102881075
+  },
+  {
+    "sha256": "97b6f5d29140dd4645084dc8b2976ed419bac5da31e27200357dfa282fcda9d3",
+    "counts": [
+      3,
+      5596,
+      4504
+    ],
+    "next_random": 0.879102702678705
+  },
+  {
+    "sha256": "d5d79a9e960c41cec868ef2297c9c8093b48f0df54d74ea1bd8a0d79a1cb1c4b",
+    "counts": [
+      1,
+      380,
+      304
+    ],
+    "next_random": 0.9931749964058584
+  },
+  {
+    "sha256": "2a1d581288ad361070f36e3694265a843b7a944b709dc9541abbeaf9ca7467de",
+    "counts": [
+      1,
+      260,
+      208
+    ],
+    "next_random": 0.26000234110210474
+  },
+  {
+    "sha256": "09a67428453a3ee6a7055b1ba4cac1a4d24d66feaab233de05010fabfafe1647",
+    "counts": [
+      4,
+      78624,
+      63040
+    ],
+    "next_random": 0.4397276894341462
+  }
+]

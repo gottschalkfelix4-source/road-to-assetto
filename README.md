@@ -70,6 +70,31 @@ ZIP-Dateien neuer Routen enthalten unter `provenance/` den OSM-Ausschnitt,
 verwendete Straßen-IDs und Abrufnachweise. Das Streckenmanifest dokumentiert
 die Quellen und Prüfsummen dieser Dateien.
 
+## Zeiten und Auslastung
+
+Unter jedem neuen Auftrag zeigt **Zeiten und Auslastung** die Laufzeit der
+Bauphasen, CPU-/RAM-Nutzung des Generators einschließlich seiner Renderer sowie
+Abrufe, Cache-Treffer, empfangene Bytes, Antwortzeiten und Fehler der Datenquellen.
+Wartepausen vor automatischen Wiederholungen erscheinen separat. Die Messung
+beginnt beim Workerstart; Zeit in der Warteschlange gehört nicht zur Bauzeit.
+Sie ist nur für den Ersteller sichtbar und enthält keine URLs oder Zugangsdaten.
+
+CPU-Prozente beziehen sich auf die verfügbaren Kerne und berücksichtigen
+Docker-CPU-Quoten; RAM ist die Summe der Prozess-RSS (geteilte Speicherseiten
+können mehrfach zählen). Nach Abschluss bleiben Spitzenwerte gespeichert.
+Fehlende oder veraltete Messungen werden gekennzeichnet. Die HTTP-Antwortzeit
+umfasst den Weg bis zu den Headern, die Abrufzeit zusätzlich den Download.
+Sie verraten nicht die interne Auslastung eines fremden Servers. Messwerte werden
+sekündlich in der privaten `telemetry.json` des Auftrags gespeichert und über das
+bestehende Browser-Polling aktualisiert. Frühere Aufträge erhalten keine erfundenen
+rückwirkenden Zeiten. Beim Fortsetzen beginnt ein neuer Messversuch; die gesamte
+Bauzeit enthält auch die vorherigen Versuche.
+
+Vegetationskarten werden nun als NumPy-Arrays berechnet; beim Zuschneiden bleiben
+bereits vollständig enthaltene Dreiecke in Arrays. Zufallsfolge, Blattanzahl,
+Geometrie, Materialien, UVs und Terrainauflösung bleiben erhalten. Der Generator
+reduziert für diese Beschleunigung keine Qualitätsstufe.
+
 ## Neue Routen und Onlinedienste
 
 Neue Routen beginnen bei **120 m innerhalb Hessens**. Es gibt keine feste
@@ -176,8 +201,19 @@ Modelle werden nicht ins Repository übernommen.
 
 GitHub Actions prüft den Code und veröffentlicht das Containerimage für den Hauptbranch
 und Versionstags. Die Unraid-Vorlage zeigt auf `latest`; ein Versions-Tag kann für feste
-Installationen gewählt werden. Der aktuelle Generatorstand ist **0.14.0**;
+Installationen gewählt werden. Der aktuelle Generatorstand ist **0.15.0**;
 das weiterhin enthaltene Altenhain-Datenpaket hat den Stand **0.11.0**.
+
+0.15.0 ergänzt private Laufzeit- und Ressourcenmessungen. Ein Vergleich ohne
+Profiler auf einem bereits geladenen, rund 1 km langen Hessen-Abschnitt ergab
+**119,7 → 82,7 Sekunden** für Modellbau und Zuschnitt, bei identischer Geometrie
+und identischen 113 Texturdateien. Das sind rund 31 % weniger Zeit in diesen
+Phasen, keine Prognose für den gesamten Download-, Render- und Exportvorgang.
+Messbedingungen und Qualitätsnachweis: [docs/performance-0.15.md](docs/performance-0.15.md).
+301 unterschiedliche Regressionstests bestanden unter Windows und im Linuxcontainer.
+Ein 120-m-Auftrag wurde im Browser bis zum ZIP einschließlich echter Live-Messwerte
+geprüft. Der Container-Smoke-Test bestätigt UID 99/GID 100, ein schreibgeschütztes
+Root-Dateisystem, CPU-/RAM-Quoten und persistente Auftragsdaten.
 
 Validierungsstand für 0.14.0: 293 automatisierte Tests bestanden im Linux-Container
 mit 8 GiB RAM und vier CPU-Kernen. Anmeldung, Einladungen und die Trennung privater

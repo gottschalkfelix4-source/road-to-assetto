@@ -76,6 +76,17 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(self.post(self.a,'/api/jobs/'+identifier+'/retry').status_code,404)
         self.assertEqual(self.post(self.b,'/api/jobs/'+identifier+'/retry').status_code,202)
         self.assertEqual(self.post(self.b,'/api/jobs/'+identifier+'/retry').status_code,400)
+    def test_measurements_are_private_to_job_owner(self):
+        from webapp.telemetry import BuildMonitor,cache_hit
+        self.pair()
+        identifier=self.post(self.b,'/api/jobs',template_id='altenhain',name='Private timings').json()['id']
+        folder=self.server.manager.root/identifier;folder.mkdir(exist_ok=True)
+        with BuildMonitor(folder):cache_hit('Hessen DGM1')
+        owner=self.b.get(self.url+'/api/jobs/'+identifier)
+        self.assertEqual(owner.status_code,200)
+        self.assertEqual(owner.json()['telemetry']['providers'][0]['cache_hits'],1)
+        self.assertEqual(self.a.get(self.url+'/api/jobs/'+identifier).status_code,404)
+        self.assertNotIn(identifier,self.a.get(self.url+'/api/jobs').text)
     def test_old_jobs_are_claimed_once_and_remain_private(self):
         legacy=self.server.manager.create({'template_id':'altenhain','name':'Legacy'})
         self.pair()

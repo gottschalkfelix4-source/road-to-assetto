@@ -13,6 +13,7 @@ from roadtoassetto.kn5 import write
 from roadtoassetto.package import package,archive
 from scripts.validate import validate
 from webapp.geodata import GeoService,GeoError
+from webapp.telemetry import BuildMonitor,stage_phase,cache_hit
 
 def write_progress(folder,stage,percent):
     temp=folder/'progress.tmp'
@@ -28,9 +29,15 @@ def write_progress(folder,stage,percent):
 
 
 def run(folder):
+    with BuildMonitor(folder):
+        return _run(folder)
+
+
+def _run(folder):
     geo=GeoService(folder.parent)
     request=validate_request(json.loads((folder/'request.json').read_text(encoding='utf-8')),data_root=folder.parent,geo_service=geo)
     def progress(stage,percent):
+        stage_phase(stage)
         write_progress(folder,stage,percent)
     progress('Gelände und Gebäude vorbereiten',5)
     cfg=config();source=ROOT/cfg['data_dir'];data=folder/cfg['data_dir']
@@ -49,6 +56,7 @@ def run(folder):
                    source_route={k:route[k] for k in ('id','name','length_m','coordinates','bounds','source','warnings') if k in route})
         cfg['source_route']['sources']=provenance['sources']
     else:
+        cache_hit('Vorbereitete Altenhain-Daten')
         for name in ('road_ways.json','road_alignment.json','marking_observations.json','junction_observations.json','bounds.json','area.osm','dgm1.tif','dom1.tif','dom1_source.json','ortho.tif','buildings_lod2.gml','facade_overrides.json','visual_sources.json','retrieval.json'):
             if (source/name).is_file():
                 shutil.copy2(source/name,data/name)

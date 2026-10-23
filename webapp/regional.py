@@ -19,6 +19,7 @@ from shapely import STRtree
 from shapely.geometry import box, LineString, Point
 
 from webapp.geodata import GeoError, USER_AGENT, CACHE_SECONDS, _digest, _json_write, _wgs_bounds
+from webapp.telemetry import request_timing, cache_hit
 
 SOURCE = 'https://download.geofabrik.de/europe/germany/hessen-latest.osm.pbf'
 MAX_BYTES = 1024**3
@@ -33,19 +34,22 @@ def regional_file(cache, progress):
     if path.is_file() and manifest.is_file() and time.time() - manifest.stat().st_mtime < CACHE_SECONDS:
         saved = json.loads(manifest.read_text())
         if saved.get('sha256') == _digest(path) and saved.get('provider') == SOURCE:
+            cache_hit('OSM Geofabrik')
             return path, saved
     progress('Hessen-OSM laden (einmalig etwa 330 MB, anschließend im Cache)', 3)
     temporary = path.with_suffix('.download')
     started = last = time.monotonic()
     sha = hashlib.sha256(); size = 0
     try:
-        with requests.get(SOURCE, headers={'User-Agent': USER_AGENT}, stream=True, timeout=(20, 60)) as response:
+        with request_timing('OSM Geofabrik') as measurement, requests.get(SOURCE, headers={'User-Agent': USER_AGENT}, stream=True, timeout=(20, 60)) as response:
+            measurement.headers(response.status_code)
             response.raise_for_status()
             expected = int(response.headers.get('Content-Length', '0'))
             if expected > MAX_BYTES:
                 raise ValueError('Regionaldatei überschreitet das Größenlimit.')
             with temporary.open('wb') as stream:
                 for chunk in response.iter_content(1024 * 1024):
+                    measurement.received(len(chunk))
                     size += len(chunk)
                     if size > MAX_BYTES or time.monotonic() - started > 900:
                         raise ValueError('Regionaldownload überschreitet das Größen- oder Zeitlimit.')

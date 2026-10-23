@@ -277,6 +277,9 @@ the frontend is served as local static HTML, CSS and JavaScript. Provider
 requests use the existing `requests` dependency. API settings and runtime image
 caches remain in `web-data/`, or the persistent `/data` volume under Docker.
 API keys are excluded from public settings responses and track/source archives.
+Build-resource measurements use `psutil` (BSD-3-Clause), installed from its
+published Python distribution with its license metadata. It samples only the
+builder and its renderer children; measurements remain in private job storage.
 
 Blender is downloaded from its official distribution into `.tools/`; it is an
 optional local build tool, not included in the track ZIP.

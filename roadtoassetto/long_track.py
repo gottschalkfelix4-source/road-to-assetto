@@ -248,8 +248,8 @@ class SceneClipper:
             hull=MultiPoint(horizontal[index]).convex_hull
             inside[index]=self.polygon.covers(hull)
             intersects[index]=self.polygon.intersects(hull)
-        output=attributes[faces[inside]].reshape(-1,attributes.shape[1]).tolist()
-        outfaces=np.arange(len(output)).reshape(-1,3).tolist()
+        interior=attributes[faces[inside]].reshape(-1,attributes.shape[1])
+        output=[]
         for index in np.flatnonzero(~inside & intersects):
             tri=attributes[faces[index]]
             lower=horizontal[index].min(axis=0);upper=horizontal[index].max(axis=0)
@@ -267,14 +267,16 @@ class SceneClipper:
                             self.cleanup['triangles']+=1
                             self.cleanup['projected_area_m2']+=float(abs(normal[1])/2)
                         continue
-                    offset=len(output);output.extend(triangle);outfaces.append([offset,offset+1,offset+2])
-        if not output:return []
-        packed=np.asarray(output)
+                    output.extend(triangle)
+        if not len(interior) and not output:return []
+        # Interior triangles already form a packed array. Avoid millions of
+        # Python lists and a second conversion without changing vertex order.
+        packed=np.concatenate((interior,np.asarray(output).reshape(-1,attributes.shape[1]))) if output else interior
         # Deduplicate attribute-identical vertices. Flat windows deliberately
         # retain different UVs/normals even where their positions coincide.
         packed=np.round(packed,7)
         unique,inverse=np.unique(packed,axis=0,return_inverse=True)
-        allfaces=inverse[np.asarray(outfaces)]
+        allfaces=inverse.reshape(-1,3)
         cleanup={}
         if mesh['name'].startswith('1GRASS_TERRAIN'):
             # Clipping can create micrometre-wide border needles below the

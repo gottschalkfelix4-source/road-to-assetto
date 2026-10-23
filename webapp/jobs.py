@@ -12,6 +12,7 @@ import time
 import uuid
 from webapp.catalog import ROOT,validate_request
 from webapp.geodata import GeoService
+from webapp.telemetry import read_metrics
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -109,6 +110,7 @@ class JobManager:
                 'status':row['status'],'stage':row['stage'],'progress':row['progress'],
                 'error':row['error'],'settings':request,
                 'summary':summary,
+                'telemetry':read_metrics(self.root/row['id'],row['status']),
                 'download_url':f'/api/jobs/{row["id"]}/download' if ready else None,
                 'preview_url':f'/api/jobs/{row["id"]}/preview.png' if ready else None,
                 'preview_urls':({view:f'/api/jobs/{row["id"]}/'+('preview' if view=='overview' else view)+'.png'

@@ -39,7 +39,7 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
     manager=JobManager(data_root,start_worker=start_worker,geo_service=geo_service)
     accounts=Accounts(manager,local_setup=host in ('127.0.0.1','localhost','::1'))
     class Handler(BaseHTTPRequestHandler):
-        server_version='RoadToAssetto/0.14'
+        server_version='RoadToAssetto/0.15'
         def log_message(self,fmt,*args):
             # URLs contain only local template/job identifiers, never submitted names.
             print('%s %s'%(self.log_date_time_string(),fmt%args),flush=True)

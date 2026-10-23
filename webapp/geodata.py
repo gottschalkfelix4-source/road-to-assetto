@@ -25,6 +25,7 @@ import numpy as np
 from pyproj import Transformer
 import rasterio
 import requests
+from webapp.telemetry import request_timing, provider_name, cache_hit
 
 NOMINATIM = 'https://nominatim.openstreetmap.org'
 OVERPASS = 'https://overpass-api.de/api/interpreter'
@@ -32,7 +33,7 @@ DGM = 'https://inspire-hessen.de/raster/dgm1/ows'
 DOP = 'https://inspire-hessen.de/raster/dop20/ows'
 DOM = 'https://inspire-hessen.de/raster/dom1/ows'
 LOD2 = 'https://inspire-hessen.de/ows/services/org.2.ef07833e-78a6-4c2c-a895-e31de788aac3_wfs'
-USER_AGENT = 'RoadToAssetto/0.14 (personal track generator; https://github.com/gottschalkfelix4-source/road-to-assetto)'
+USER_AGENT = 'RoadToAssetto/0.15 (personal track generator; https://github.com/gottschalkfelix4-source/road-to-assetto)'
 WFS = '{http://www.opengis.net/wfs/2.0}'
 GML = '{http://www.opengis.net/gml/3.2}'
 BU = '{http://inspire.ec.europa.eu/schemas/bu-core3d/4.0}'
@@ -279,12 +280,13 @@ class GeoService:
     def _request_bytes(self, url, *, params=None, data=None, max_bytes=2_000_000, timeout=75):
         started = time.monotonic()
         try:
-            with requests.Session() as session:
+            with request_timing(provider_name(url)) as measurement, requests.Session() as session:
                 session.headers.update({'User-Agent': USER_AGENT, 'Accept-Language': 'de,en;q=0.7'})
                 with session.request('POST' if data is not None else 'GET', url, params=params, data=data,
                                      timeout=(15, min(timeout, 45)), stream=True, allow_redirects=False) as response:
+                    measurement.headers(response.status_code)
                     if response.status_code in (429, 502, 503, 504):
-                        raise GeoError('Der öffentliche Geodatendienst ist gerade ausgelastet. Bitte später erneut versuchen.', 'provider_busy', 503)
+                        raise GeoError('Der öffentliche Geodatendienst hat die Anfrage vorübergehend abgewiesen oder konnte sie nicht rechtzeitig beantworten. Bitte später erneut versuchen.', 'provider_busy', 503)
                     if response.status_code != 200:
                         raise GeoError('Der Geodatendienst konnte den Ausschnitt nicht liefern.', 'provider_error', 502)
                     try:
@@ -295,6 +297,7 @@ class GeoService:
                         raise GeoError('Die Antwort des Geodatendienstes ist zu groß. Bitte einen kleineren Ausschnitt wählen.', 'provider_response_too_large', 502)
                     content, size = [], 0
                     for chunk in response.iter_content(1024 * 1024):
+                        measurement.received(len(chunk))
                         size += len(chunk)
                         if size > max_bytes or time.monotonic() - started > timeout:
                             raise GeoError('Der begrenzte Geodaten-Download wurde abgebrochen. Bitte später mit einem kleineren Ausschnitt versuchen.', 'provider_limit', 502)
@@ -391,9 +394,11 @@ class GeoService:
         path = self.cache / 'osm' / (key + '.osm')
         with _osm_lock:
             if path.is_file() and time.time() - path.stat().st_mtime < CACHE_SECONDS:
+                cache_hit('OSM Overpass')
                 return key, path.read_bytes()
             cached = self._cached_osm(bounds)
             if cached:
+                cache_hit('OSM (Cache)')
                 return cached[0], cached[1]
             west, south, east, north = bounds
             bbox = ','.join(f'{value:.7f}' for value in (south, west, north, east))
@@ -560,6 +565,7 @@ class GeoService:
             temporary.write_bytes(content)
         else:
             temporary = path
+            cache_hit(provider_name(url))
         try:
             with rasterio.open(temporary) as raster:
                 resolution = .2 if kind == 'dop' else 1.
@@ -644,6 +650,9 @@ class GeoService:
                 if not all((cache / name).is_file() and _digest(cache / name) == digest for name, digest in record['files'].items()):
                     raise GeoError('Der gespeicherte Geodatencache ist beschädigt. Bitte die Strecke erneut planen.', 'cache_corrupt', 409)
                 progress('Gespeicherte Geodaten verwenden', 100)
+                for source in record['sources'].values():
+                    cache_hit(provider_name(source.get('url','')))
+                cache_hit(provider_name(route.get('context_provider') or self.overpass))
             else:
                 bounds = route['bounds_utm']
                 _bounds([(bounds[0], bounds[1]), (bounds[2], bounds[3])], 0)
@@ -658,6 +667,7 @@ class GeoService:
                 else:
                     content = context.read_bytes()
                     context_provider=route.get('context_provider') or self.overpass
+                    cache_hit(provider_name(context_provider))
                 (cache / 'area.osm').write_bytes(content)
                 _json_write(cache / 'road_ways.json', route['ways'])
                 _json_write(cache / 'bounds.json', bounds)
