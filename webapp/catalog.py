@@ -1,13 +1,84 @@
 """Prepared templates and validated references to server-owned Hessian routes."""
 import json
+import hashlib
+import threading
 from functools import lru_cache
 from pathlib import Path
 import numpy as np
+from PIL import Image
 from pyproj import Transformer
+import rasterio
+from rasterio.transform import array_bounds,from_bounds
+from rasterio.warp import calculate_default_transform,reproject,Resampling
 from roadtoassetto.prepare import ordered_road
 from roadtoassetto.road_alignment import load_alignment
 
 ROOT=Path(__file__).resolve().parents[1]
+_map_lock=threading.Lock()
+
+
+def _map_stamp(data):
+    return tuple((name,(data/name).stat().st_mtime_ns,(data/name).stat().st_size)
+                 for name in ('bounds.json','textures/ortho.jpg','ortho.tif') if (data/name).is_file())
+
+
+@lru_cache(maxsize=4)
+def _map_layout(data_path,stamp):
+    """One shared pixel grid for the JPEG warp and its Leaflet rectangle."""
+    data=Path(data_path)
+    bounds=json.loads((data/'bounds.json').read_text(encoding='utf-8'))
+    if (not isinstance(bounds,list) or len(bounds)!=4 or not np.isfinite(bounds).all()
+            or bounds[2]<=bounds[0] or bounds[3]<=bounds[1]):
+        raise ValueError('Invalid prepared aerial extent')
+    with Image.open(data/'textures/ortho.jpg') as image:
+        if image.format!='JPEG' or image.mode!='RGB':
+            raise ValueError('Prepared aerial image must be RGB JPEG')
+        width,height=image.size
+        if min(width,height)<1 or width*height>100_000_000:
+            raise ValueError('Prepared aerial dimensions are invalid')
+    # prepare.py exports the entire native raster as JPEG. Its exact extent
+    # can differ slightly from the integer request bounds (e.g. by 20 cm).
+    if (data/'ortho.tif').is_file():
+        with rasterio.open(data/'ortho.tif') as raster:
+            if (raster.crs is None or raster.crs.to_epsg()!=25832 or raster.count<3
+                    or (raster.width,raster.height)!=(width,height)
+                    or max(abs(a-b) for a,b in zip(raster.bounds,bounds))>1.01
+                    or abs(raster.transform.b)>1e-10 or abs(raster.transform.d)>1e-10):
+                raise ValueError('Prepared aerial georeferencing does not match its JPEG')
+            bounds=list(raster.bounds)
+    source_transform=from_bounds(*bounds,width,height)
+    target_transform,target_width,target_height=calculate_default_transform('EPSG:25832','EPSG:3857',width,height,*bounds)
+    if min(target_width,target_height)<1 or target_width*target_height>105_000_000:
+        raise ValueError('Projected aerial dimensions are invalid')
+    projected_bounds=array_bounds(target_height,target_width,target_transform)
+    unproject=Transformer.from_crs(3857,4326,always_xy=True)
+    west,south=unproject.transform(projected_bounds[0],projected_bounds[1])
+    east,north=unproject.transform(projected_bounds[2],projected_bounds[3])
+    return {'source_transform':source_transform,'target_transform':target_transform,
+            'width':target_width,'height':target_height,'geographic_bounds':[west,south,east,north]}
+
+
+def projected_map(data_root):
+    """Render only when requested; all writes stay in writable appdata."""
+    data=ROOT/config()['data_dir']
+    stamp=_map_stamp(data)
+    layout=_map_layout(str(data),stamp)
+    key=hashlib.sha256(json.dumps(['mercator-v1',str(data),stamp]).encode()).hexdigest()[:24]
+    path=Path(data_root)/'cache/maps'/('altenhain-'+key+'.jpg')
+    with _map_lock:
+        if path.is_file():
+            return path
+        with Image.open(data/'textures/ortho.jpg') as image:
+            source=np.moveaxis(np.asarray(image.convert('RGB')),2,0)
+        target=np.zeros((3,layout['height'],layout['width']),dtype=np.uint8)
+        reproject(source,target,src_transform=layout['source_transform'],src_crs='EPSG:25832',
+                  dst_transform=layout['target_transform'],dst_crs='EPSG:3857',
+                  resampling=Resampling.bilinear,num_threads=2,warp_mem_limit=128)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        temporary=path.with_suffix('.tmp')
+        Image.fromarray(np.moveaxis(target,0,2)).save(temporary,format='JPEG',quality=94)
+        temporary.replace(path)
+    return path
 
 def config():
     return json.loads((ROOT/'tracks/altenhain.json').read_text(encoding='utf-8'))
@@ -17,7 +88,7 @@ def template():
     data=ROOT/cfg['data_dir']
     # The geometry manifest is large. Reuse the public catalog until its
     # inputs change, rather than parsing it for every poll or job request.
-    names=('road_ways.json','road_alignment.json','bounds.json','manifest.json')
+    names=('road_ways.json','road_alignment.json','bounds.json','manifest.json','textures/ortho.jpg','ortho.tif')
     stamp=tuple((data/name).stat().st_mtime_ns if (data/name).is_file() else None for name in names)
     return _template(str(data),json.dumps(cfg,sort_keys=True),stamp)
 
@@ -37,15 +108,14 @@ def _template(data_path,cfg_json,stamp):
     unproject=Transformer.from_crs(25832,4326,always_xy=True)
     lons,lats=unproject.transform(points[:,0],points[:,1])
     bounds=json.loads((data/'bounds.json').read_text())
-    west,south=unproject.transform(bounds[0],bounds[1])
-    east,north=unproject.transform(bounds[2],bounds[3])
+    aerial=_map_layout(str(data),_map_stamp(data))
     meta=json.loads((data/'manifest.json').read_text(encoding='utf-8'))
     return {'id':'altenhain','name':'Langstraße, Altenhain','city':cfg['city'],
             'length_m':float(distances[-1]),'version':cfg['version'],
             'map':{'image_url':'/api/templates/altenhain/map.jpg',
                    'bounds':bounds,'route':points.round(3).tolist(),'crs':'EPSG:25832',
                    'coordinates':np.c_[lats,lons,s].round(7).tolist(),
-                   'geographic_bounds':[west,south,east,north]},
+                   'geographic_bounds':aerial['geographic_bounds'],'image_crs':'EPSG:3857'},
             'preview_url':'/api/templates/altenhain/preview.png',
             'summary':{'buildings':meta['buildings'],'elevation_gain_m':round(meta['elevation_max_m']-meta['elevation_min_m'],1)},
             'capabilities':{'min_segment_m':120,'max_road_width_m':6,'aerial_width_profile':alignment.get('applied',False),

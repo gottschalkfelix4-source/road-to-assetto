@@ -8,7 +8,7 @@ import re
 import signal
 import threading
 from urllib.parse import urlsplit
-from webapp.catalog import ROOT,config,template
+from webapp.catalog import ROOT,config,template,projected_map
 from webapp.jobs import JobManager,QueueFull
 from webapp import ai
 from webapp.geodata import GeoError
@@ -91,7 +91,8 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
                 try:return self.json(ai.public_settings(manager.root))
                 except ai.AIError as error:return self.json({'error':error.message,'code':error.code},error.status)
             if path=='/api/templates/altenhain/map.jpg':
-                return self.file(ROOT/config()['data_dir']/'textures/ortho.jpg')
+                try:return self.file(projected_map(manager.root))
+                except (OSError,ValueError):return self.json({'error':'Das vorbereitete Luftbild konnte nicht geladen werden.'},503)
             if path=='/api/templates/altenhain/preview.png':
                 return self.file(ROOT/'build'/config()['id']/'ui/preview.png')
             route_match=re.fullmatch(r'/api/routes/([a-f0-9]{32})',path)

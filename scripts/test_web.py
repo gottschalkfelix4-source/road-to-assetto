@@ -18,6 +18,7 @@ sys.path.insert(0,str(ROOT))
 from webapp.server import create_server
 from webapp.catalog import template,validate_request
 from webapp.jobs import JobManager,terminate_builder
+from unittest.mock import patch
 
 
 class LocalAssets(HTMLParser):
@@ -261,5 +262,45 @@ finally:
                         process.kill()
                     if process:
                         process.wait(timeout=5)
+
+class AerialProjectionTests(unittest.TestCase):
+    def test_projected_pixels_match_world_markers_and_cache_stays_in_appdata(self):
+        import numpy as np
+        from PIL import Image,ImageDraw
+        from pyproj import Transformer
+        from webapp import catalog
+        with tempfile.TemporaryDirectory(dir=ROOT/'test-results',prefix='aerial-test-') as temporary:
+            root=Path(temporary);data=root/'source';(data/'textures').mkdir(parents=True)
+            (root/'tracks').mkdir()
+            (root/'tracks/altenhain.json').write_text(json.dumps({'data_dir':'source'}))
+            bounds=[461547,5556104,462466,5556755]
+            (data/'bounds.json').write_text(json.dumps(bounds))
+            source=Image.new('RGB',(1000,700),(15,25,35));draw=ImageDraw.Draw(source)
+            markers=[(70,90),(930,600),(900,100)]
+            for x,y in markers:draw.ellipse((x-3,y-3,x+3,y+3),fill=(250,15,15))
+            original=data/'textures/ortho.jpg';source.save(original,quality=100,subsampling=0)
+            original_bytes=original.read_bytes()
+            with patch.object(catalog,'ROOT',root):
+                output=catalog.projected_map(root/'state')
+                layout=catalog._map_layout(str(data),catalog._map_stamp(data))
+                stamp=output.stat().st_mtime_ns
+                self.assertEqual(catalog.projected_map(root/'state'),output)
+                self.assertEqual(output.stat().st_mtime_ns,stamp)
+            self.assertTrue(output.is_relative_to(root/'state'))
+            self.assertEqual(original.read_bytes(),original_bytes)
+            image=np.asarray(Image.open(output))
+            mercator=Transformer.from_crs(25832,3857,always_xy=True)
+            project_bounds=Transformer.from_crs(4326,3857,always_xy=True)
+            west,south,east,north=layout['geographic_bounds']
+            left,bottom=project_bounds.transform(west,south);right,top=project_bounds.transform(east,north)
+            for x,y in markers:
+                utm_x=bounds[0]+(x+.5)/1000*(bounds[2]-bounds[0])
+                utm_y=bounds[3]-(y+.5)/700*(bounds[3]-bounds[1])
+                world_x,world_y=mercator.transform(utm_x,utm_y)
+                column=round((world_x-left)/(right-left)*image.shape[1]-.5)
+                row=round((top-world_y)/(top-bottom)*image.shape[0]-.5)
+                pixel=image[row,column].astype(int)
+                self.assertGreater(pixel[0]-pixel[1],100,'A world marker moved away from its projected image pixel')
+
 
 if __name__=='__main__':unittest.main(verbosity=2)
