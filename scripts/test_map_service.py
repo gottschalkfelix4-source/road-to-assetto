@@ -318,8 +318,8 @@ class RealGeoHTTPTests(unittest.TestCase):
                 self.assertEqual(self.call('/api/search', {'query': query})[0], 400)
         self.network.assert_not_called()
 
-    def test_too_short_or_too_long_endpoints_do_not_start_provider_download(self):
-        for endpoint in ({'lat': 50.158, 'lon': 8.46301}, {'lat': 50.158, 'lon': 8.51}):
+    def test_too_short_endpoints_do_not_start_provider_download(self):
+        for endpoint in ({'lat': 50.158, 'lon': 8.46301},):
             with self.subTest(endpoint=endpoint):
                 status, _, result = self.call('/api/routes/preview', {
                     'start': {'lat': 50.158, 'lon': 8.463}, 'end': endpoint})

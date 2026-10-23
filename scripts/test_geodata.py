@@ -1,5 +1,6 @@
 """Bounded routing, provider validation and cache regression tests (offline)."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
 
 from webapp.geodata import (BU, GML, WFS, GeoError, GeoService, TO_WGS,
-                           _bounds, _point, plan_route)
+                           _bounds, _point, _wgs_bounds, plan_route)
 
 
 BASE = (462000, 5556400)
@@ -121,6 +122,88 @@ class ProviderTests(unittest.TestCase):
         self.assertAlmostEqual(saved['length_m'], 360)
         with patch.object(self.service, '_request_bytes', side_effect=AssertionError('no repeat network query')):
             self.assertEqual(route, self.service.preview(position(20), position(380)))
+
+    def test_provider_change_invalidates_preview_cache_but_preserves_saved_route(self):
+        with patch.object(self.service, '_confirm_hessen'), patch.object(self.service, '_osm', return_value=('1' * 64, osm())):
+            original = self.service.preview(position(20), position(380))
+        original_record = self.service.get_route(original['id'])
+        changes = {'ROADTOASSETTO_ROUTER_URL': 'https://routing.example.test',
+                   'ROADTOASSETTO_ROUTER_PROFILE': 'alternate_profile',
+                   'ROADTOASSETTO_ROUTER_EXCLUDE': 'motorway'}
+        for name, value in changes.items():
+            with self.subTest(setting=name), patch.dict(os.environ, {name: value}):
+                changed = GeoService(self.root)
+                with patch.object(changed, '_confirm_hessen'), patch.object(changed, '_osm', return_value=('1' * 64, osm())) as fetch:
+                    fresh = changed.preview(position(20), position(380))
+                self.assertNotEqual(fresh['id'], original['id'])
+                fetch.assert_called_once()
+                self.assertEqual(changed.get_route(original['id']), original_record)
+                with patch.object(changed, '_request_bytes', side_effect=AssertionError('unchanged provider must reuse cache')):
+                    self.assertEqual(changed.preview(position(20), position(380)), fresh)
+
+    def test_long_preview_stores_provider_fingerprint_for_reuse(self):
+        from copy import deepcopy
+        points = [position(number * 100) for number in range(51)]
+        planned = {'name': 'Synthetic long route', 'length_m': 5000., 'coordinates': points,
+                   'bounds_utm': [BASE[0], BASE[1], BASE[0] + 5000, BASE[1]],
+                   'routing': {'provider': 'OSRM'}, 'warnings': []}
+        with patch.object(self.service, '_confirm_hessen'), patch('webapp.routing.RoutingService.route', side_effect=lambda *args: deepcopy(planned)) as route:
+            original = self.service.preview(points[0], points[-1])
+            self.assertEqual(self.service.preview(points[0], points[-1]), original)
+            route.assert_called_once()
+        record = self.service.get_route(original['id'])
+        self.assertEqual(record['schema_version'], 2)
+        self.assertEqual(record['provider_fingerprint'], self.service.provider_fingerprint)
+        with patch.dict(os.environ, {'ROADTOASSETTO_ROUTER_EXCLUDE': 'motorway'}):
+            changed = GeoService(self.root)
+            with patch.object(changed, '_confirm_hessen'), patch('webapp.routing.RoutingService.route', side_effect=lambda *args: deepcopy(planned)) as route:
+                fresh = changed.preview(points[0], points[-1])
+                route.assert_called_once()
+            self.assertNotEqual(fresh['id'], original['id'])
+            self.assertEqual(changed.get_route(original['id']), record)
+
+    def test_nearby_endpoints_fall_back_when_local_detour_exceeds_area(self):
+        points = {1: (0, 0), 2: (0, 2000), 3: (1500, 2000), 4: (1500, 0), 5: (400, 0)}
+        content = osm([(10, list(points), {'highway': 'residential'})], points)
+        fallback = {'id': 'f' * 32, 'length_m': 6600., 'sections_count': 7}
+        bounds = [BASE[0] - 250, BASE[1] - 250, BASE[0] + 1750, BASE[1] + 2250]
+        cached = ('1' * 64, content, _wgs_bounds(bounds), bounds)
+        with patch.object(self.service, '_confirm_hessen'), patch.object(self.service, '_cached_osm', return_value=cached):
+            with patch.object(self.service, '_preview_routed', return_value=fallback) as routed:
+                result = self.service.preview(position(0), position(400))
+        self.assertEqual(result, fallback)
+        routed.assert_called_once_with(tuple(position(0)), tuple(position(400)))
+
+    def test_nearby_endpoints_fall_back_when_local_extract_is_disconnected(self):
+        content = osm([(10, [1, 2], {'highway': 'residential'}), (11, [4, 5], {'highway': 'residential'})])
+        fallback = {'id': 'f' * 32, 'length_m': 1800., 'sections_count': 2}
+        with patch.object(self.service, '_confirm_hessen'), patch.object(self.service, '_osm', return_value=('1' * 64, content)):
+            with patch.object(self.service, '_preview_routed', return_value=fallback) as routed:
+                self.assertEqual(self.service.preview(position(0), position(400)), fallback)
+                routed.assert_called_once()
+
+    def test_no_eligible_private_roads_do_not_trigger_routing_fallback(self):
+        for tags in ({'access': 'private'}, {'highway': 'footway'}, {'bridge': 'yes'}):
+            content = osm([(10, [1, 2, 3, 4, 5], {'highway': 'residential', **tags})])
+            with self.subTest(tags=tags), patch.object(self.service, '_confirm_hessen'), patch.object(self.service, '_osm', return_value=('1' * 64, content)):
+                with patch.object(self.service, '_preview_routed') as routed:
+                    with self.assertRaises(GeoError) as caught:
+                        self.service.preview(position(0), position(400))
+                    self.assertEqual(caught.exception.code, 'no_roads')
+                    routed.assert_not_called()
+
+    def test_local_route_longer_than_one_km_exposes_section_plan(self):
+        points = {1: (0, 0), 2: (0, 200), 3: (200, 200), 4: (200, -200), 5: (400, -200), 6: (400, 0)}
+        content = osm([(10, list(points), {'highway': 'residential'})], points)
+        with patch.object(self.service, '_confirm_hessen'), patch.object(self.service, '_osm', return_value=('1' * 64, content)):
+            with patch.object(self.service, '_preview_routed') as routed:
+                result = self.service.preview(position(0), position(400))
+                routed.assert_not_called()
+        self.assertGreater(result['length_m'], 1100)
+        self.assertEqual(result['sections_count'], 2)
+        self.assertGreater(result['estimates']['source_bytes'], 0)
+        self.assertGreater(result['estimates']['workspace_bytes'], result['estimates']['source_bytes'])
+        self.assertEqual(self.service.get_route(result['id'])['schema_version'], 1)
 
     def test_contained_osm_extent_reuses_verified_larger_cache(self):
         bounds = [8.4, 50.1, 8.5, 50.2]

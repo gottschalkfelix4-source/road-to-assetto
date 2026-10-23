@@ -37,7 +37,9 @@ WFS = '{http://www.opengis.net/wfs/2.0}'
 GML = '{http://www.opengis.net/gml/3.2}'
 BU = '{http://inspire.ec.europa.eu/schemas/bu-core3d/4.0}'
 MAX_AREA_M2 = 2_000_000
-MAX_ROUTE_M = 2000
+# Small local extracts remain useful for the existing prepared-area cache.
+# This is a routing strategy threshold, not a user route-length limit.
+LOCAL_ROUTING_M = 1000
 MIN_ROUTE_M = 120
 MAX_SNAP_M = 60
 MAX_BUILDINGS = 1000
@@ -115,7 +117,16 @@ def _hessen(address):
 
 
 def _public(route):
-    return {key: route[key] for key in ('id', 'name', 'length_m', 'coordinates', 'bounds', 'source', 'warnings')}
+    return {key: route[key] for key in ('id', 'name', 'length_m', 'coordinates', 'bounds', 'source', 'warnings',
+                                      'sections_count', 'estimates') if key in route}
+
+
+def estimate_storage(sections):
+    area=sum((s['bounds'][2]-s['bounds'][0])*(s['bounds'][3]-s['bounds'][1]) for s in sections)
+    # Native aerial/DEM windows scale with area. Each model additionally has
+    # material atlases, scene JSON, geometry and compressed output overhead.
+    return {'source_bytes':int(area*80),
+            'workspace_bytes':int(area*220)+len(sections)*512*1024**2+256*1024**2}
 
 
 def _eligible(tags):
@@ -213,12 +224,12 @@ def plan_route(content, start, end, search_bounds):
             break
         for neighbor, weight, way_id in graph.get(node, []):
             candidate = distance + weight
-            if candidate <= MAX_ROUTE_M + .01 and candidate < distances.get(neighbor, math.inf):
+            if candidate < distances.get(neighbor, math.inf):
                 distances[neighbor] = candidate
                 previous[neighbor] = (node, way_id)
                 heapq.heappush(queue, (candidate, neighbor))
     if target not in distances:
-        raise GeoError('Keine zusammenhängende Strecke bis 2 km gefunden. Einbahnstraßen, private Wege, Brücken und Tunnel werden berücksichtigt.', 'route_disconnected')
+        raise GeoError('Keine zusammenhängende Strecke im lokalen Ausschnitt gefunden. Einbahnstraßen, private Wege, Brücken und Tunnel werden berücksichtigt.', 'route_disconnected')
     if distances[target] < MIN_ROUTE_M:
         raise GeoError(f'Die Strecke muss mindestens {MIN_ROUTE_M} m lang sein.', 'route_too_short')
     path, edge_ways = [target], []
@@ -262,6 +273,10 @@ class GeoService:
             parsed = urlsplit(url)
             if parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
                 raise GeoError('Ungültige serverseitige Geodatendienst-Konfiguration.', 'provider_configuration', 503)
+        self.provider_fingerprint = hashlib.sha256(json.dumps([
+            self.geocoder,self.overpass,os.environ.get('ROADTOASSETTO_ROUTER_URL','https://router.project-osrm.org'),
+            os.environ.get('ROADTOASSETTO_ROUTER_PROFILE','driving'),os.environ.get('ROADTOASSETTO_ROUTER_EXCLUDE','')
+        ]).encode()).hexdigest()
 
     def _request_bytes(self, url, *, params=None, data=None, max_bytes=2_000_000, timeout=75):
         started = time.monotonic()
@@ -404,17 +419,23 @@ class GeoService:
                 continue
             try:
                 saved = json.loads(saved_path.read_text(encoding='utf-8'))
-                if saved.get('requested_start') == list(start) and saved.get('requested_end') == list(end):
+                if (saved.get('requested_start') == list(start) and saved.get('requested_end') == list(end)
+                        and saved.get('provider_fingerprint') == self.provider_fingerprint):
                     return _public(self.get_route(saved['id']))
             except (OSError, KeyError, ValueError, TypeError):
                 continue
         points = [TO_UTM.transform(point[1], point[0]) for point in (start, end)]
         direct = math.dist(*points)
-        if direct > MAX_ROUTE_M:
-            raise GeoError('Start und Ziel dürfen höchstens 2 km auseinander liegen.', 'route_too_long')
         if direct < 40:
             raise GeoError('Bitte Start und Ziel weiter auseinander setzen.', 'route_too_short')
-        minimum_bounds = _bounds(points, 160)
+        if direct > LOCAL_ROUTING_M:
+            return self._preview_routed(start, end)
+        try:
+            minimum_bounds = _bounds(points, 160)
+        except GeoError as error:
+            if error.code == 'area_too_large':
+                return self._preview_routed(start, end)
+            raise
         self._confirm_hessen(start)
         self._confirm_hessen(end)
         route = None
@@ -428,20 +449,64 @@ class GeoService:
                 if _contains(cached_wgs_bounds, _wgs_bounds(candidate['bounds_utm'])):
                     route = candidate
                     key, content, search_bounds = cached_key, cached_content, cached_utm_bounds
-            except GeoError:
-                pass
+            except GeoError as error:
+                if error.code in ('area_too_large', 'route_disconnected'):
+                    return self._preview_routed(start, end)
         if route is None:
-            search_bounds = _bounds(points, 250)
-            key, content = self._osm(_wgs_bounds(search_bounds))
-            route = plan_route(content, start, end, search_bounds)
+            try:
+                search_bounds = _bounds(points, 250)
+                key, content = self._osm(_wgs_bounds(search_bounds))
+                route = plan_route(content, start, end, search_bounds)
+            except GeoError as error:
+                # Close endpoints may require a detour outside the small local
+                # extract. Its area budget must not become a route-length cap.
+                if error.code in ('area_too_large', 'route_disconnected'):
+                    return self._preview_routed(start, end)
+                raise
         route.update(id=uuid.uuid4().hex, bounds=_wgs_bounds(route['bounds_utm']),
                      context_key=key, context_bounds_utm=search_bounds, context_sha256=hashlib.sha256(content).hexdigest(),
                      requested_start=list(start), requested_end=list(end), schema_version=1,
+                     provider_fingerprint=self.provider_fingerprint,
                      source='OpenStreetMap contributors (ODbL); HVBG Hessen DGM1/DOP20/LoD2 (dl-de/zero-2-0)',
                      created_at=datetime.now(timezone.utc).isoformat(),
                      warnings=['Straßenverlauf aus OpenStreetMap; keine vermessenen Fahrbahnränder.',
                                'Gebäudeformen und Gelände werden beim Erstellen aus Hessens offenen Geodaten geladen. Fassaden und Grundstücksdetails bleiben angenähert.',
                                'Brücken, Tunnel und private Wege sind ausgeschlossen. Keine Verkehrsregeln oder Fahrberechtigung für die reale Straße ableiten.'])
+        if route['length_m'] > LOCAL_ROUTING_M:
+            from roadtoassetto.long_track import resample_route, plan_sections
+            try:
+                sections = plan_sections(resample_route(route['coordinates']))
+            except ValueError as error:
+                raise GeoError(str(error), 'route_geometry') from error
+            route.update(sections_count=len(sections), estimates=estimate_storage(sections))
+        _json_write(self.routes / (route['id'] + '.json'), route)
+        return _public(route)
+
+    def _preview_routed(self, start, end):
+        from webapp.routing import RoutingService, RoutingError
+        from roadtoassetto.long_track import resample_route, plan_sections
+        self._confirm_hessen(start)
+        self._confirm_hessen(end)
+        try:
+            route = RoutingService(self.root).route(start, end)
+        except RoutingError as error:
+            raise GeoError(str(error), error.code, error.status) from error
+        try:
+            sections = plan_sections(resample_route(route['coordinates'], check_simple=False))
+        except ValueError as error:
+            raise GeoError(str(error), 'route_geometry') from error
+        route.update(id=uuid.uuid4().hex, schema_version=2, bounds=_wgs_bounds(route['bounds_utm']),
+                     provider_fingerprint=self.provider_fingerprint,
+                     requested_start=list(start), requested_end=list(end),
+                     sections_count=len(sections),
+                     estimates=estimate_storage(sections),
+                     source='OpenStreetMap contributors (ODbL), OSRM; HVBG Hessen DGM1/DOP20/LoD2 (dl-de/zero-2-0)',
+                     created_at=datetime.now(timezone.utc).isoformat())
+        route.setdefault('warnings', []).extend([
+            'Straßenverlauf aus OpenStreetMap; keine vermessenen Fahrbahnränder. Fassaden bleiben angenähert.',
+            'Amtliche Daten und Bauwerke werden vor dem Bau abschnittsweise geprüft. Tunnel und Brücken sind noch nicht exportierbar.',
+            'Start und Ziel sind in Hessen geprüft; der gesamte Korridor benötigt lückenlose Hessische Geodaten.',
+            'Speicherangaben sind grobe Schätzungen; Gebäudezahl und Luftbilder beeinflussen den tatsächlichen Bedarf.'])
         _json_write(self.routes / (route['id'] + '.json'), route)
         return _public(route)
 
@@ -452,7 +517,7 @@ class GeoService:
         if not path.is_file():
             raise GeoError('Die ausgewählte Strecke wurde nicht gefunden. Bitte erneut auf der Karte planen.', 'route_not_found', 404)
         route = json.loads(path.read_text(encoding='utf-8'))
-        if route.get('id') != route_id or route.get('schema_version') != 1:
+        if route.get('id') != route_id or route.get('schema_version') not in (1, 2):
             raise GeoError('Die gespeicherte Strecke ist beschädigt. Bitte erneut planen.', 'invalid_saved_route', 409)
         return route
 
@@ -541,12 +606,14 @@ class GeoService:
         return {'provider': 'HVBG Hessen', 'license': 'dl-de/zero-2-0', 'url': LOD2,
                 'building_count': start, 'pages': pages, 'crs': 'EPSG:7423', 'sha256': _digest(path)}
 
-    def prepare_route(self, route_id, destination, progress=None):
-        route = self.get_route(route_id)
+    def prepare_route(self, route_id, destination, progress=None, *, section_route=None, section_index=None):
+        route = section_route if section_route is not None else self.get_route(route_id)
         destination = Path(destination)
         progress = progress or (lambda stage, percent: None)
         with _prepare_lock:
             cache = self.cache / 'inputs' / route_id
+            if section_index is not None:
+                cache = cache / f'section-{int(section_index):04d}'
             cache.mkdir(parents=True, exist_ok=True)
             ready = cache / 'ready.json'
             if ready.is_file():
@@ -558,8 +625,8 @@ class GeoService:
                 bounds = route['bounds_utm']
                 _bounds([(bounds[0], bounds[1]), (bounds[2], bounds[3])], 0)
                 progress('OSM-Straßen und Umgebung laden', 10)
-                context = self.cache / 'osm' / (route['context_key'] + '.osm')
-                existing = route['context_bounds_utm']
+                context = self.cache / 'osm' / (route.get('context_key', 'missing') + '.osm')
+                existing = route.get('context_bounds_utm', [0, 0, 0, 0])
                 if (not context.is_file() or _digest(context) != route['context_sha256']
                         or bounds[0] < existing[0] or bounds[1] < existing[1] or bounds[2] > existing[2] or bounds[3] > existing[3]):
                     _, content = self._osm(route['bounds'])

@@ -8,6 +8,33 @@ from PIL import Image, ImageDraw
 import numpy as np
 
 
+def write_track_map(track, centerline, max_size=4096):
+    """Bound raster memory while preserving AC's world-to-map transform.
+
+    SCALE_FACTOR is metres per pixel; offsets remain world metres, matching
+    Content Manager's TrackMapRenderer.TrackMapInformation convention.
+    """
+    center=np.asarray(centerline,dtype=float)[:,[0,2]]
+    if len(center)<2 or not np.isfinite(center).all():
+        raise ValueError('Invalid track map centerline')
+    margin=20
+    span=np.maximum(center.max(axis=0)-center.min(axis=0),1.)
+    scale=min(1.,(max_size-2*margin)/float(span.max()))
+    lo=center.min(axis=0)-margin/scale
+    width,height=np.ceil(span*scale+2*margin).astype(int)
+    image=Image.new('RGBA',(int(width),int(height)),(0,0,0,0))
+    draw=ImageDraw.Draw(image)
+    path=[tuple((p-lo)*scale) for p in center]
+    draw.line(path,fill=(0,0,0,200),width=9,joint='curve')
+    draw.line(path,fill='white',width=5,joint='curve')
+    image.save(track/'map.png')
+    image.thumbnail((512,512))
+    outline=Image.new('RGBA',(512,512),(0,0,0,0))
+    outline.alpha_composite(image,((512-image.width)//2,(512-image.height)//2))
+    outline.save(track/'ui/outline.png')
+    (track/'data/map.ini').write_text(f'[PARAMETERS]\nWIDTH={width}\nHEIGHT={height}\nMARGIN={margin}\nSCALE_FACTOR={1/scale:.9f}\nMAX_SIZE={max_size}\nX_OFFSET={-lo[0]:.9f}\nZ_OFFSET={-lo[1]:.9f}\nDRAWING_SIZE=5\n',encoding='utf-8')
+
+
 def route_provenance(root, config, metadata, track):
     """Ship the route's small source records, never the surrounding job/cache."""
     route = metadata.get('source_route') or config.get('source_route')
@@ -85,7 +112,11 @@ VIBRATION_GAIN=0
 VIBRATION_LENGTH=0
 ''')
     (track/'data/surfaces.ini').write_text('\n'.join(surfaces),encoding='utf-8')
-    (track/'models.ini').write_text(f'[MODEL_0]\nFILE={config["id"]}.kn5\nPOSITION=0,0,0\nROTATION=0,0,0\n',encoding='utf-8')
+    models=meta.get('models') or [{'file':config['id']+'.kn5'}]
+    for model in models:
+        if not isinstance(model.get('file'),str) or Path(model['file']).name!=model['file'] or not model['file'].endswith('.kn5'):
+            raise ValueError('Invalid packaged model filename')
+    (track/'models.ini').write_text('\n'.join(f'[MODEL_{index}]\nFILE={model["file"]}\nPOSITION=0,0,0\nROTATION=0,0,0\n' for index,model in enumerate(models)),encoding='utf-8')
     (track/'data/lighting.ini').write_text('[LIGHTING]\nSUN_PITCH_ANGLE=50\nSUN_HEADING_ANGLE=16\n',encoding='utf-8')
     (track/'data/crew.ini').write_text('[HEADER]\nSIDE=1\n',encoding='utf-8')
     (track/'data/groove.ini').write_text('[HEADER]\nGROOVES_NUMBER=0\n',encoding='utf-8')
@@ -100,21 +131,7 @@ VIBRATION_LENGTH=0
         low,high=meta['road_width_range_m']
         ui['width']=f'{low:.1f}-{high:.1f}'
         (track/'ui/ui_track.json').write_text(json.dumps(ui,indent=2),encoding='utf-8')
-    center=np.array(meta['centerline_ac'])[:,[0,2]]
-    lo=center.min(axis=0)-20
-    hi=center.max(axis=0)+20
-    width,height=np.ceil(hi-lo).astype(int)
-    image=Image.new('RGBA',(int(width),int(height)),(0,0,0,0))
-    draw=ImageDraw.Draw(image)
-    path=[tuple(p-lo) for p in center]
-    draw.line(path,fill=(0,0,0,200),width=9,joint='curve')
-    draw.line(path,fill='white',width=5,joint='curve')
-    image.save(track/'map.png')
-    image.thumbnail((512,512))
-    outline=Image.new('RGBA',(512,512),(0,0,0,0))
-    outline.alpha_composite(image,((512-image.width)//2,(512-image.height)//2))
-    outline.save(track/'ui/outline.png')
-    (track/'data/map.ini').write_text(f'[PARAMETERS]\nWIDTH={width}\nHEIGHT={height}\nMARGIN=20\nSCALE_FACTOR=1\nMAX_SIZE=2048\nX_OFFSET={-lo[0]:.5f}\nZ_OFFSET={-lo[1]:.5f}\nDRAWING_SIZE=5\n',encoding='utf-8')
+    write_track_map(track,meta['centerline_ac'])
     source_notice=('OSM extract, route way IDs, geographic bounds and retrieval provenance are included\n'
                    'in this track under provenance/; see prototype_manifest.json for file hashes.'
                    if new_route else 'OSM extracts and route way IDs are included in the source package.')
@@ -199,12 +216,13 @@ See THIRD_PARTY.md in the source project.
     return track
 
 
-def archive(root, config, track):
+def archive(root, config, track, progress=None):
     dist=root/'dist'
     dist.mkdir(exist_ok=True)
     path=dist/(config['id']+'-'+config['version']+'.zip')
+    files=[file for file in sorted(track.rglob('*')) if file.is_file()]
     with zipfile.ZipFile(path,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
-        for file in sorted(track.rglob('*')):
-            if file.is_file():
-                z.write(file,Path('content/tracks')/config['id']/file.relative_to(track))
+        for index,file in enumerate(files):
+            if progress:progress(index,len(files))
+            z.write(file,Path('content/tracks')/config['id']/file.relative_to(track))
     return path

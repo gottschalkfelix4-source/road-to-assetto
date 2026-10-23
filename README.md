@@ -2,7 +2,7 @@
 
 Ein selbst gehosteter Streckengenerator mit Weboberfläche für **Assetto Corsa**.
 Auf der verschiebbaren Straßenkarte lassen sich Orte und Adressen suchen und
-Start sowie Ziel für eine eigene kurze Straßenroute in **Hessen** auswählen.
+Start sowie Ziel für eine eigene Straßenroute in **Hessen** auswählen.
 Die vorbereitete, rund 701 m lange **Langstraße in Bad Soden-Altenhain** bleibt
 als sofort verfügbare Vorlage mit Teilstrecken ab 120 m enthalten.
 
@@ -41,8 +41,9 @@ Benutzeranmeldung mit; den Zugang auf das eigene Netz oder einen geschützten Pr
 1. Einen Ort oder eine Adresse suchen, einen Treffer auswählen und Start/Ziel auf
    der Karte setzen. Alternativ die vorbereitete Altenhain-Strecke wählen.
 2. Die berechnete Straßenroute prüfen und Name, Straßenbreite sowie Details einstellen.
-3. Den Auftrag starten. Für neue Routen lädt der Server zuerst die benötigten
-   offenen Geodaten; anschließend entstehen das Modell und die Vorschauen.
+3. Den Bauplan und die grobe Speicherschätzung prüfen, dann den Auftrag starten.
+   Bei langen Routen lädt und verarbeitet der Server die offenen Geodaten
+   abschnittsweise; anschließend entstehen das Streckenpaket und die Vorschauen.
 4. Das fertige ZIP herunterladen und in Assetto Corsa Content Manager importieren.
 5. In **Practice / Freies Training** fahren.
 
@@ -56,13 +57,36 @@ die Quellen und Prüfsummen dieser Dateien.
 
 ## Neue Routen und Onlinedienste
 
-Neue Routen sind auf **120 bis 2.000 m innerhalb Hessens** begrenzt. Start und
-Ziel müssen höchstens 60 m von einer geeigneten Straße entfernt liegen; der
-benötigte Kartenausschnitt darf höchstens 2 km² und 1.000 Gebäude umfassen.
-Einbahnrichtungen werden beachtet. Private Wege, Brücken und Tunnel sind
-ausgeschlossen. Für neue Routen ist die eingestellte Straßenbreite ein
-konstanter Wert zwischen 4 und 8 m. Ein erster Test mit 200–500 m begrenzt
-Download, Speicherbedarf und Bauzeit.
+Neue Routen beginnen bei **120 m innerhalb Hessens**. Es gibt keine feste
+2-km-Grenze; auch Routen über 50 km können ausgewählt werden. Lange Routen werden
+in kleinere Bauabschnitte zerlegt, deren Geodaten und Modelle der Server
+nacheinander verarbeitet. Das Ergebnis ist **eine zusammenhängende Strecke**:
+Das ZIP enthält mehrere Modelldateien und wird nur einmal in Content Manager
+installiert. Die gerenderten Vorschauen zeigen bei langen Routen einen
+ausgewählten Abschnitt, nicht die gesamte Strecke.
+
+Die Vorschau zeigt die Abschnittsanzahl und eine grobe Speicherschätzung.
+Download, freie Festplatte, Bauzeit und Leistung im Spiel bleiben praktische
+Grenzen; die Abschnittsverarbeitung ist keine Zusage für beliebig große Exporte
+auf jedem Rechner. Die geschätzten Arbeitsdaten enthalten zusätzlich zu den
+Quellen auch Platz für Modelle und Verarbeitung. Bereits gespeicherte Aufträge
+benötigen daneben weiterhin Speicher.
+
+Start und Ziel müssen höchstens 60 m von einer geeigneten Straße entfernt liegen.
+Einbahnrichtungen werden beachtet. Private Wege sowie nicht unterstützte Brücken
+und Tunnel werden bei der Datenprüfung abgewiesen. Für neue Routen ist die
+eingestellte Straßenbreite ein konstanter Wert zwischen 4 und 8 m. Ein erster
+Test mit 200–500 m hilft, Qualität und Leistung des eigenen Servers einzuschätzen.
+
+Für lange Verbindungen nutzt die Routenplanung OSRM auf OpenStreetMap-Daten.
+Das Standardprofil berechnet eine Autoroute und **kann Autobahnen enthalten**.
+Die Vorschau deshalb vor dem Bau prüfen; die Darstellung einer Route bestätigt
+noch keine vollständig unterstützte Brücken- oder Tunnelgeometrie. Der öffentliche
+[OSRM-Demodienst](https://github.com/Project-OSRM/osrm-backend/wiki/Demo-server)
+ist für gelegentliche, nicht kommerzielle Abfragen vorgesehen. Die Anwendung
+begrenzt Anfragen und speichert Ergebnisse zwischen. Für häufige Nutzung einen
+eigenen oder geeigneten kompatiblen Dienst konfigurieren; siehe [DOCKER.md](DOCKER.md).
+Start- und Zielkoordinaten werden an den Routinganbieter übertragen.
 
 Die neue Suche nutzt standardmäßig den öffentlichen Nominatim-Dienst. **Bitte
 die [Nominatim-Nutzungsbedingungen](https://operations.osmfoundation.org/policies/nominatim/)
@@ -131,7 +155,7 @@ Modelle werden nicht ins Repository übernommen.
 
 GitHub Actions prüft den Code und veröffentlicht das Containerimage für den Hauptbranch
 und Versionstags. Die Unraid-Vorlage zeigt auf `latest`; ein Versions-Tag kann für feste
-Installationen gewählt werden. Der aktuelle Generatorstand ist **0.12.0**;
+Installationen gewählt werden. Der aktuelle Generatorstand ist **0.13.0**;
 das weiterhin enthaltene Altenhain-Datenpaket hat den Stand **0.11.0**.
 
 ## Lizenz

@@ -38,6 +38,9 @@ def run(folder):
     route=None
     if request['template_id']=='hessen':
         route=geo.get_route(request['route_id'])
+        if route.get('schema_version')==2 or request['end_m']-request['start_m']>1000:
+            from webapp.longbuild import run_long
+            return run_long(folder,request,route,geo,progress)
         provenance=geo.prepare_route(route['id'],data,progress=lambda stage,percent:progress(stage,5+round(float(percent)*.1)))
         route['warnings']=provenance['warnings']
         cfg.update(city='Hessen',road_name=route['name'],

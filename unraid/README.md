@@ -1,7 +1,7 @@
 # Road to Assetto auf Unraid
 
 Die Vorlage startet den Browser-Generator mit Adresssuche, Straßenkarte und
-Start-/Ziel-Auswahl für neue kurze Routen in **Hessen**. Der vorbereitete
+Start-/Ziel-Auswahl für neue Routen in **Hessen**, auch über 50 km. Der vorbereitete
 **Altenhain–Langstraße-Datensatz** bleibt enthalten. Das Image bringt Blender
 und die Materialien mit; ein Quellcode-Checkout auf Unraid ist nicht nötig.
 Neue Routen laden ihre offenen Geodaten während des Baus aus dem Internet.
@@ -19,8 +19,11 @@ Unraid mit aktiviertem Docker und einer x86-64-CPU (`amd64`). Vorschauen werden
 auf der CPU gerendert; eine GPU und eine Assetto-Corsa-Installation auf dem Server
 sind nicht erforderlich. Die Vorlage begrenzt den Container auf vier CPU-Kerne
 und 8 GiB RAM. Für Image und erste Testaufträge etwa 20 GiB freien Speicher
-einplanen; gespeicherte Aufträge belegen zusätzlich Platz. Ein SSD-Pool für
-Appdata verkürzt die Lade- und Schreibzeiten.
+einplanen; gespeicherte Aufträge belegen zusätzlich Platz. Für lange Routen reicht
+diese Startempfehlung nicht aus: Vor dem Auftrag die grobe Speicherschätzung in
+der Routenvorschau mit dem freien Appdata-Speicher vergleichen. Ein SSD-Pool für
+Appdata verkürzt die Lade- und Schreibzeiten. Der abschnittsweise Bau begrenzt
+die gleichzeitig verarbeiteten Daten, nicht die Gesamtgröße des Ergebnisses.
 
 ## Vorlage installieren
 
@@ -88,14 +91,32 @@ vorhandenen Appdata-Ordner sichern.
 
 Im Browser einen Ort oder eine Adresse ausdrücklich suchen, einen Treffer
 auswählen und Start sowie Ziel auf der Karte setzen. Die Route vor dem Erstellen
-prüfen. Neue Routen sind auf Hessen, 120–2.000 m, einen Ausschnitt bis 2 km² und
-höchstens 1.000 Gebäude begrenzt. Private Wege, Brücken und Tunnel werden
-ausgeschlossen. Für den ersten eigenen Test 200–500 m wählen.
+prüfen. Neue Routen beginnen bei 120 m und müssen in Hessen liegen; die frühere
+2-km-Grenze entfällt. Auch Routen über 50 km werden abschnittsweise gebaut.
+Vor dem Start zeigt die Oberfläche die Abschnittsanzahl und eine grobe
+Speicherschätzung. Das ZIP enthält eine zusammenhängende Strecke, die einmal
+in Content Manager importiert wird. Die Vorschaubilder zeigen bei langen Routen
+einen ausgewählten Abschnitt.
+
+Private Wege und nicht unterstützte Brücken beziehungsweise Tunnel werden bei
+der Datenprüfung abgewiesen. Lange Aufträge können erheblich länger dauern und
+mehr Festplattenspeicher benötigen. Auch die spätere Leistung in Assetto Corsa
+hängt von Streckenlänge und Bebauung ab. Für den ersten eigenen Test 200–500 m
+wählen, um den eigenen Server und die erzeugte Qualität einzuschätzen.
 
 Der Container benötigt für diese Funktion Internetzugriff auf die Geodatendienste;
 der Browser benötigt Zugriff auf die Kartenkacheln. Routen und Geodatencache werden
 im bestehenden Appdata-Ordner unter `routes/` und `geo-cache/` gespeichert.
 Die vorbereitete Altenhain-Vorlage benötigt keine neuen Geodaten-Downloads.
+
+Lange Verbindungen werden über einen OSRM-Routingdienst geplant. Das voreingestellte
+Autoprofil kann Autobahnen enthalten; Verlauf und Datenhinweise vor dem Bau prüfen.
+Der öffentliche Dienst ist für gelegentliche private Abfragen vorgesehen und hat
+keine Verfügbarkeitsgarantie. In der erweiterten Vorlagenansicht lässt sich ein
+eigener Routingdienst eintragen. Ausschlüsse wie `motorway` nur bei einem Server
+setzen, der diese Option unterstützt; der öffentliche Standarddienst unterstützt
+sie derzeit nicht. Die [OSRM-Nutzungsregeln](https://routing.openstreetmap.de/about.html)
+gelten für alle Nutzer des Dienstes zusammen.
 
 Die öffentliche Nominatim-Suche ist für gelegentlichen privaten Einsatz vorgesehen.
 **Die [Nominatim-Nutzungsbedingungen](https://operations.osmfoundation.org/policies/nominatim/)

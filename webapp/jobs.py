@@ -95,7 +95,7 @@ class JobManager:
         if stored:
             keys=('id','name','version','length_m','buildings','elevation_gain_m',
                   'elevation_min_m','elevation_max_m','hillside_retaining_assemblies',
-                  'hillside_staircases','hillside_driveways','preview_kind','preview_views')
+                  'hillside_staircases','hillside_driveways','preview_kind','preview_views','sections_count','preview_scope')
             summary={key:stored[key] for key in keys if key in stored}
             if isinstance(stored.get('ai_materials'),dict):
                 summary['ai_materials']={'enabled':stored['ai_materials'].get('enabled',False)}
@@ -160,23 +160,31 @@ class JobManager:
             try:
                 folder.mkdir(exist_ok=True)
                 (folder/'request.json').write_text(row['request'],encoding='utf-8')
+                settings=json.loads(row['request'])
+                segmented=(settings.get('template_id')=='hessen' and
+                           (settings['end_m']-settings['start_m']>1000 or
+                            self.geo.get_route(settings['route_id']).get('schema_version')==2))
                 with (folder/'build.log').open('w',encoding='utf-8') as log:
                     kwargs={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}
                     self.process=subprocess.Popen([sys.executable,'-u','-m','webapp.worker','--job-dir',str(folder)],cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,**kwargs)
                     began=time.monotonic()
+                    heartbeat=began
+                    last_progress=None
                     while self.process.poll() is None:
                         if self.stop.wait(.5):
                             terminate_builder(self.process)
                             raise RuntimeError('Dienst beendet.')
-                        settings=json.loads(row['request'])
                         timeout=1800 if settings.get('template_id')=='hessen' else (1200 if settings.get('ai_materials') else 900)
-                        if time.monotonic()-began>timeout:
+                        if time.monotonic()-(heartbeat if segmented else began)>timeout:
                             terminate_builder(self.process)
-                            raise RuntimeError('Der Bau hat das Zeitlimit überschritten.')
+                            raise RuntimeError('Seit 30 Minuten kein Baufortschritt. Gespeicherte Quelldaten bleiben für einen erneuten Versuch erhalten.' if segmented else 'Der Bau hat das Zeitlimit überschritten.')
                         progress=folder/'progress.json'
                         if progress.exists():
                             try:
                                 value=json.loads(progress.read_text(encoding='utf-8'))
+                                state=(value.get('stage'),value.get('progress'))
+                                if state!=last_progress:
+                                    heartbeat=time.monotonic();last_progress=state
                                 self._update(job_id,stage=value['stage'],progress=value['progress'])
                             except (OSError,ValueError,KeyError):
                                 pass
@@ -188,6 +196,8 @@ class JobManager:
                 result=json.loads((folder/'result.json').read_text(encoding='utf-8'))
                 self._update(job_id,status='succeeded',stage='Fertig',progress=100,summary=json.dumps(result['summary'],ensure_ascii=False))
             except Exception as error:
+                if self.process and self.process.poll() is None:
+                    terminate_builder(self.process)
                 self._update(job_id,status='failed',stage='Fehlgeschlagen',error=str(error)[:400])
             finally:
                 self.process=None

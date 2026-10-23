@@ -57,7 +57,8 @@ jobs:
             scripts.test_ground_details scripts.test_hillside_banks scripts.test_hillside_render \
             scripts.test_junction_mouths scripts.test_photo_projection scripts.test_road_markings \
             scripts.test_road_wear scripts.test_terrain_sampling scripts.test_ai scripts.test_ai_integration \
-            scripts.test_web scripts.test_map_service scripts.test_geodata scripts.test_package
+            scripts.test_web scripts.test_map_service scripts.test_geodata scripts.test_package \
+            scripts.test_routing scripts.test_long_track scripts.test_longbuild scripts.test_route_sections
       - name: Registry login
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v4

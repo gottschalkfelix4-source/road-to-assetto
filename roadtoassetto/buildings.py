@@ -706,7 +706,8 @@ def photo_source(data_dir, override):
 
 
 def build_lod2(data_dir, textures, scene, material, add_mesh, ac, line, road_polygon, dem, ortho_bounds,
-               allow_outside_photo_overrides=False, terrain_height_sampler=None, base_road_reservation=None):
+               allow_outside_photo_overrides=False, terrain_height_sampler=None, base_road_reservation=None,
+               ownership_polygon=None):
     if not isinstance(allow_outside_photo_overrides,bool):
         raise ValueError('allow_outside_photo_overrides must be a boolean')
     if terrain_height_sampler is not None and not callable(terrain_height_sampler):
@@ -872,6 +873,9 @@ def build_lod2(data_dir, textures, scene, material, add_mesh, ac, line, road_pol
         all_vertices=np.vstack([rings[0] for _,rings in faces])
         footprint=MultiPoint(all_vertices[:,:2]).convex_hull
         if not isinstance(footprint,Polygon) or footprint.area<5:
+            continue
+        if ownership_polygon is not None and not ownership_polygon.covers(footprint.centroid):
+            ignored_outside.update(building_photos)
             continue
         if footprint.distance(line)>120:
             if allow_outside_photo_overrides:

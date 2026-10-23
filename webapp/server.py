@@ -15,7 +15,7 @@ from webapp.geodata import GeoError
 
 def public_route(route):
     """Never return stored provider responses or local source-cache paths."""
-    return {key:route[key] for key in ('id','name','length_m','coordinates','bounds','source','warnings','start','end') if key in route}
+    return {key:route[key] for key in ('id','name','length_m','coordinates','bounds','source','warnings','start','end','sections_count','estimates') if key in route}
 
 
 def map_config():
@@ -36,7 +36,7 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
     tiles=map_config()
     manager=JobManager(data_root,start_worker=start_worker,geo_service=geo_service)
     class Handler(BaseHTTPRequestHandler):
-        server_version='RoadToAssetto/0.12'
+        server_version='RoadToAssetto/0.13'
         def log_message(self,fmt,*args):
             # URLs contain only local template/job identifiers, never submitted names.
             print('%s %s'%(self.log_date_time_string(),fmt%args),flush=True)
@@ -84,7 +84,8 @@ def create_server(host='127.0.0.1',port=8765,data_root=None,start_worker=True,ge
                 return self.json({'status':'ok','version':config()['version'],'mode':'local','templates':['altenhain'],
                                   'features':{'interactive_map':True,'address_search':True,'hessen_routes':True}})
             if path=='/api/catalog': return self.json({'templates':[template()],'map_config':{k:v for k,v in tiles.items() if k!='tile_origin'},
-                'discovery':{'region':'Hessen','min_segment_m':120,'max_length_m':2000,'max_area_km2':2,
+                'discovery':{'region':'Hessen','min_segment_m':120,'max_length_m':None,'max_section_area_km2':2,
+                             'section_length_m':1000,'preview_timeout_s':180,
                              'bounds':[7.7,49.35,10.3,51.7]}})
             if path=='/api/jobs': return self.json({'jobs':manager.list()})
             if path=='/api/ai/settings':

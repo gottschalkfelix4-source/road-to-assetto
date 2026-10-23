@@ -3,9 +3,15 @@
 (() => {
   const $ = id => document.getElementById(id);
   const ui = Object.fromEntries([...document.querySelectorAll('[id]')].map(node=>[node.id,node]));
-  const state = {template:null,mode:'hessen',jobs:[],selectedJob:null,linkedJob:null,map:null,pick:null,posting:false,polling:false,timer:null,failures:0,lastCreatedJob:null,selection:null,lastEditedEndpoint:'end',points:{start:null,end:null},route:null,routeVersion:0,previewing:false,searching:false,reusing:false,connected:false};
+  const state = {template:null,mode:'hessen',jobs:[],selectedJob:null,linkedJob:null,map:null,pick:null,posting:false,polling:false,timer:null,failures:0,lastCreatedJob:null,selection:null,lastEditedEndpoint:'end',points:{start:null,end:null},route:null,routeVersion:0,previewing:false,previewController:null,searching:false,reusing:false,connected:false};
   const metres = new Intl.NumberFormat('de-DE',{maximumFractionDigits:0});
   const decimal = new Intl.NumberFormat('de-DE',{maximumFractionDigits:1});
+  const distanceLabel=value=>value>=1000 ? `${decimal.format(value/1000)} km` : `${metres.format(value)} m`;
+  const storageLabel=value=>value>=1073741824 ? `${decimal.format(value/1073741824)} GiB` : `${metres.format(value/1048576)} MiB`;
+  function routeRangeLabel() {
+    const minimum=Number(state.discovery?.min_segment_m)||120,maximum=state.discovery?.max_length_m;
+    return Number.isFinite(maximum)&&maximum>=minimum ? `${distanceLabel(minimum)} bis ${distanceLabel(maximum)}` : `ab ${distanceLabel(minimum)}`;
+  }
   const statuses = {queued:'In Warteschlange',running:'Wird erstellt',succeeded:'Fertig',failed:'Fehlgeschlagen',cancelled:'Abgebrochen'};
   const stages = {queued:'Wartet auf die Generierung …',preparing:'Geodaten werden vorbereitet …',completed:'Strecke ist fertig.'};
   const element=(tag,className,text)=>{const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node;};
@@ -13,6 +19,9 @@
   function localUrl(value) {try {const url=new URL(value,location.origin);return value && url.origin===location.origin && ['http:','https:'].includes(url.protocol) ? url.href : null;}catch{return null;}}
   async function api(path,options={},timeout=25000) {
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
+    const abort=()=>controller.abort();
+    if(options.signal?.aborted)abort();
+    else options.signal?.addEventListener('abort',abort,{once:true});
     try {
       const response=await fetch(path,{...options,signal:controller.signal,headers:{Accept:'application/json',...(options.body?{'Content-Type':'application/json'}:{}),...options.headers}});
       const data=await response.json().catch(()=>null);
@@ -20,10 +29,10 @@
       if(data===null) throw new Error('Der Dienst hat eine ungültige Antwort gesendet.');
       return data;
     }catch(error){
-      if(error.name==='AbortError') throw new Error('Die Anfrage hat zu lange gedauert. Bitte erneut versuchen.');
+      if(error.name==='AbortError'&&!options.signal?.aborted) throw new Error('Die Anfrage hat zu lange gedauert. Bitte erneut versuchen.');
       if(error instanceof TypeError) throw new Error('Keine Verbindung zum Server. Bitte Verbindung und Dienst prüfen.');
       throw error;
-    }finally{clearTimeout(timer);}
+    }finally{clearTimeout(timer);options.signal?.removeEventListener('abort',abort);}
   }
   function connection(ok,message) {
     state.connected=ok;
@@ -47,7 +56,7 @@
     const length=Number(template.length_m),total=Math.floor(length),minimum=Math.ceil(Number(template.capabilities?.min_segment_m)||120);
     if(!Number.isFinite(length)||total<minimum)throw new Error('Die vorbereitete Strecke ist zu kurz.');
     state.template={...template,total,minimum,length_m:length};
-    state.discovery=catalog.discovery || {max_length_m:2000,min_segment_m:120};
+    state.discovery=catalog.discovery || {min_segment_m:120};
     if(!state.map) state.map=new RoadMap('route-map',onMapPoint,bad=>{$('tile-error').hidden=!bad;},catalog.map_config);
     if(catalog.map_config)state.map.configureTiles(catalog.map_config);
     state.map.setPrepared(state.template);
@@ -82,6 +91,7 @@
   }
   function switchMode(mode,remember=true) {
     if(!state.template)return;
+    cancelPreview();
     state.routeVersion++;
     let saved=null;
     try{saved=JSON.parse(localStorage.getItem(`road-to-assetto:${mode}`));}catch{/* Storage is optional. */}
@@ -93,9 +103,9 @@
     $('aerial-toggle').checked=false;
     for(const id of ['start-distance','end-distance','start-slider','end-slider'])ui[id].disabled=!prepared;
     ui['region-name'].textContent=prepared ? state.template.name : 'Neue Straße in Hessen';
-    ui['region-description'].textContent=prepared ? `${state.template.city} · ${metres.format(state.template.length_m)} m vorbereitet` : `Start und Ziel wählen · ${metres.format(state.discovery.min_segment_m||120)} bis ${metres.format(state.discovery.max_length_m||2000)} m`;
+    ui['region-description'].textContent=prepared ? `${state.template.city} · ${distanceLabel(state.template.length_m)} vorbereitet` : `Start und Ziel wählen · ${routeRangeLabel()}`;
     ui['source-description'].textContent=prepared ? 'Vorbereitete amtliche Gebäudemodelle und Geländehöhen, am Luftbild nachgeführte Straßenränder. Fassaden und Grundstücksanschlüsse sind teilweise nachgebildet.' : 'Straßenverlauf aus OpenStreetMap, Gelände, Luftbilder und Gebäudedaten aus Hessen. Geodaten werden für den gewählten Abschnitt geladen; Fassaden und Grundstücksdetails werden daraus nachgebildet.';
-    const limits=prepared ? state.template.limitations || [] : ['Verfügbar für kurze Straßenabschnitte in Hessen.','Der Verlauf wird vor dem Export geprüft. Verfügbare Gebäudedaten und Geländehöhen können je nach Ort variieren.','Eine Route ist keine Vermessung. Fassaden und Grundstücksdetails können vom Original abweichen.'];
+    const limits=prepared ? state.template.limitations || [] : ['Verfügbar für Straßen in Hessen.','Der Verlauf wird vor dem Export geprüft. Verfügbare Gebäudedaten und Geländehöhen können je nach Ort variieren.','Eine Route ist keine Vermessung. Fassaden und Grundstücksdetails können vom Original abweichen.'];
     ui['limitations'].replaceChildren(...limits.map(text=>element('li','',String(text))));
     for(const option of ui['road-width'].options){const value=Number(option.value);option.disabled=prepared&&value>6;option.hidden=prepared&&value>6;option.textContent=prepared ? (value===6?'Nach Luftbild · 100 %':`Schmaler · ${Math.round(value/6*100)} %`) : `${decimal.format(value)} m`;}
     if(prepared&&Number(ui['road-width'].value)>6)ui['road-width'].value='6';
@@ -133,7 +143,7 @@
     if(state.mode==='altenhain') {
       const preciseEnd=selectedEndDistance(end),selected=[pointAt(start),...state.template.map.coordinates.filter(p=>p[2]>start&&p[2]<preciseEnd),pointAt(preciseEnd)];
       state.map.setRoute(selected);state.map.setMarker('start',selected[0]);state.map.setMarker('end',selected.at(-1));
-      ui['selection-distance'].textContent=`${metres.format(preciseEnd-start)} m gewählt`;
+      ui['selection-distance'].textContent=`${distanceLabel(preciseEnd-start)} gewählt`;
     }
     persistForm();updateSubmit();
   }
@@ -144,6 +154,7 @@
   }
   function onMapPoint(endpoint,value) {
     if(state.reusing)return;
+    cancelPreview();
     if(state.mode==='altenhain'){ui[endpoint+'-distance'].value=value;setDistances(endpoint);state.pick=null;}
     else {state.points[endpoint]=value;state.route=null;state.routeVersion++;state.map.setRoute([]);state.pick=endpoint==='start'&&!state.points.end?'end':null;renderNewSelection();persistForm();}
     state.map.setPick(state.pick);updatePick();showError('form-error','');
@@ -155,8 +166,9 @@
     }
     $('preview-route').disabled=state.previewing||!state.points.start||!state.points.end;
     $('preview-route').textContent=state.previewing?'Verlauf wird geprüft …':'Straßenverlauf prüfen';
-    if(state.mode==='hessen')ui['selection-distance'].textContent=state.route?`${metres.format(state.route.length_m)} m gewählt`:'Verlauf noch nicht geprüft';
-    if(!state.route){$('route-feedback').textContent=state.previewing?'Straßenverbindungen werden geladen. Das kann einen Moment dauern.':state.points.start&&state.points.end?'Start und Ziel sind gesetzt. Jetzt den Straßenverlauf prüfen.':'Eine Adresse suchen oder direkt auf der Karte Start und Ziel wählen.';$('route-notes').hidden=true;}
+    $('cancel-preview').hidden=!state.previewing;
+    if(state.mode==='hessen')ui['selection-distance'].textContent=state.route?`${distanceLabel(state.route.length_m)} gewählt`:'Verlauf noch nicht geprüft';
+    if(!state.route){$('route-feedback').textContent=state.previewing?'Straßenverbindungen werden geladen. Das kann einen Moment dauern.':state.points.start&&state.points.end?'Start und Ziel sind gesetzt. Jetzt den Straßenverlauf prüfen.':'Eine Adresse suchen oder direkt auf der Karte Start und Ziel wählen.';$('route-notes').hidden=true;$('route-build-plan').hidden=true;}
     updateSubmit();
   }
   function validateRoute(route) {
@@ -168,18 +180,29 @@
     state.points={start:validPoint(route.start)?route.start:{lat:coords[0][0],lon:coords[0][1]},end:validPoint(route.end)?route.end:{lat:coords.at(-1)[0],lon:coords.at(-1)[1]}};
     if(rename||ui['track-name'].value==='Meine Straße')ui['track-name'].value=String(route.name||'Meine Straße').slice(0,60);
     renderNewSelection();state.map.setRoute(coords,true);
-    $('route-feedback').textContent=`${metres.format(route.length_m)} m Straßenverlauf geprüft. Die Strecke kann jetzt erstellt werden.`;
+    const plannedRoute=Number.isInteger(route.sections_count)&&route.sections_count>0;
+    $('route-feedback').textContent=plannedRoute ? `${distanceLabel(route.length_m)} Straßenverlauf ermittelt. Geodaten und Bauwerke werden vor dem Export geprüft.` : `${distanceLabel(route.length_m)} Straßenverlauf geprüft. Die Strecke kann jetzt erstellt werden.`;
+    const plan=[];
+    if(Number.isInteger(route.sections_count)&&route.sections_count>1)plan.push(`Der Server baut ${metres.format(route.sections_count)} Abschnitte nacheinander. Du erhältst eine zusammenhängende Strecke.`);
+    if(plannedRoute)plan.push('Brücken und Tunnel werden noch nicht unterstützt.');
+    const estimates=route.estimates||{},sizes=[];
+    if(Number.isFinite(estimates.source_bytes)&&estimates.source_bytes>0)sizes.push(`${storageLabel(estimates.source_bytes)} Geodaten`);
+    if(Number.isFinite(estimates.workspace_bytes)&&estimates.workspace_bytes>0)sizes.push(`${storageLabel(estimates.workspace_bytes)} Arbeitsdaten auf dem Server`);
+    if(sizes.length)plan.push(`Grobe Speicherschätzung: ${sizes.join(', ')}. Tatsächlicher Bedarf und Bauzeit hängen von Bebauung und Detailstufe ab.`);
+    $('route-build-plan').textContent=plan.join(' ');$('route-build-plan').hidden=!plan.length;
     const warnings=Array.isArray(route.warnings)?route.warnings:[];
     $('route-warnings').replaceChildren(...[...new Set(warnings.map(String))].map(text=>element('li','',text)));$('route-notes').hidden=!warnings.length;$('route-notes').open=false;
     persistForm();updateSubmit();
   }
   async function previewRoute() {
     if(state.previewing||!state.points.start||!state.points.end)return;
-    const version=state.routeVersion,points=structuredClone(state.points);state.previewing=true;state.route=null;state.map.setRoute([]);renderNewSelection();showError('form-error','');
-    try{const response=await api('/api/routes/preview',{method:'POST',body:JSON.stringify(points)},90000);if(version===state.routeVersion&&state.mode==='hessen')adoptRoute(response.route);}
-    catch(error){if(version===state.routeVersion)showError('form-error',errorMessage(error));}
-    finally{state.previewing=false;renderNewSelection();}
+    const version=state.routeVersion,points=structuredClone(state.points),controller=new AbortController();state.previewController=controller;state.previewing=true;state.route=null;state.map.setRoute([]);renderNewSelection();showError('form-error','');
+    const configuredTimeout=Number(state.discovery?.preview_timeout_s),timeout=Number.isFinite(configuredTimeout)&&configuredTimeout>0?Math.max(120000,configuredTimeout*1000):120000;
+    try{const response=await api('/api/routes/preview',{method:'POST',body:JSON.stringify(points),signal:controller.signal},timeout);if(version===state.routeVersion&&state.mode==='hessen'&&!controller.signal.aborted)adoptRoute(response.route);}
+    catch(error){if(version===state.routeVersion&&!controller.signal.aborted)showError('form-error',errorMessage(error));}
+    finally{if(state.previewController===controller){state.previewController=null;state.previewing=false;renderNewSelection();}}
   }
+  function cancelPreview(){if(state.previewController){state.previewController.abort();state.previewController=null;state.previewing=false;state.routeVersion++;}}
   function updateVegetation(){ui['vegetation-value'].textContent=`${Math.round(Number(ui['vegetation-density'].value)*100)} %`;}
   function pendingDuplicate() {
     const values=formValues();
@@ -223,12 +246,15 @@
     ui['job-success'].hidden=job.status!=='succeeded';
     if (job.status==='succeeded') {
       const summary=job.summary || {};
+      const sectionCount=summary.sections_count;
+      $('job-section-note').hidden=!(Number.isInteger(sectionCount)&&sectionCount>1);
+      $('job-section-note').textContent=Number.isInteger(sectionCount)&&sectionCount>1?`${metres.format(sectionCount)} Bauabschnitte in einer zusammenhängenden Strecke. Das ZIP wird als eine Strecke installiert.`:'';
       const warnings=[...new Set((Array.isArray(summary.source_route?.warnings)?summary.source_route.warnings:[]).filter(value=>typeof value==='string'&&value.trim()).map(value=>value.trim()))];
       $('job-source-warnings').replaceChildren(...warnings.map(value=>element('li','',value)));
       $('job-source-title').textContent=`Hinweise zu den Geodaten (${warnings.length})`;
       $('job-source-notes').hidden=!warnings.length;
       const parts=[];
-      if (Number.isFinite(Number(summary.length_m))) parts.push(`${metres.format(Number(summary.length_m))} m Strecke`);
+      if (Number.isFinite(Number(summary.length_m))) parts.push(`${distanceLabel(Number(summary.length_m))} Strecke`);
       if (Number.isFinite(Number(summary.buildings))) parts.push(`${metres.format(Number(summary.buildings))} Gebäude`);
       const elevation = summary.elevation_gain_m ?? (Number.isFinite(summary.elevation_max_m) && Number.isFinite(summary.elevation_min_m) ? summary.elevation_max_m-summary.elevation_min_m : undefined);
       if (Number.isFinite(elevation)) parts.push(`${decimal.format(elevation)} m Höhenunterschied`);
@@ -255,6 +281,7 @@
         button.addEventListener('click',()=>{state.previewView=key;renderDetail(job);});return button;
       }));
       const preview=localUrl(views[state.previewView] || job.preview_url);
+      $('preview-caption').textContent=summary.preview_scope==='representative_section' ? 'Vorschauen eines ausgewählten Bauabschnitts aus der erzeugten Strecke. Zum Vergrößern anklicken.' : 'Vorschauen aus dem erzeugten 3D-Modell. Zum Vergrößern anklicken.';
       ui['job-preview'].alt=summary.preview_kind === 'aerial_map' ? 'Luftbild mit dem ausgewählten Straßenverlauf' : 'Gerenderte Vorschau der erzeugten Strecke';
       if (preview) {
         $('preview-open').href=preview;
@@ -306,7 +333,8 @@
   });
   $('route-mode').addEventListener('change',()=>switchMode($('route-mode').value));
   $('preview-route').addEventListener('click',previewRoute);
-  $('clear-route').addEventListener('click',()=>{state.points={start:null,end:null};state.route=null;state.routeVersion++;state.map.setRoute([]);state.pick=null;state.map.setPick(null);updatePick();renderNewSelection();persistForm();showError('form-error','');});
+  $('cancel-preview').addEventListener('click',()=>{cancelPreview();renderNewSelection();});
+  $('clear-route').addEventListener('click',()=>{cancelPreview();state.points={start:null,end:null};state.route=null;state.routeVersion++;state.map.setRoute([]);state.pick=null;state.map.setPick(null);updatePick();renderNewSelection();persistForm();showError('form-error','');});
   for(const endpoint of ['start','end']) {
     $('new-pick-'+endpoint).addEventListener('click',()=>setPick(endpoint));$('center-'+endpoint).addEventListener('click',()=>state.map.chooseCenter(endpoint));
     ui[endpoint+'-distance'].addEventListener('input',()=>{state.lastEditedEndpoint=endpoint;const value=inputSelection();if(value)renderSelection(value.start,value.end);else updateSubmit();});

@@ -97,35 +97,49 @@ def prepare(root: Path, config: dict):
     textures = data_dir / 'textures'
     textures.mkdir(parents=True, exist_ok=True)
     ways = json.loads((data_dir / 'road_ways.json').read_text(encoding='utf-8'))
-    lonlat = ordered_road(ways)
-    transform = Transformer.from_crs(4326, 25832, always_xy=True)
-    xy_original = np.array(transform.transform(lonlat[:, 0], lonlat[:, 1])).T
-    xy_original, alignment = load_alignment(data_dir,xy_original)
-    xy_original, route_selection = select_route(xy_original, config.get('route_start_m'), config.get('route_end_m'))
-    ds = np.linalg.norm(np.diff(xy_original, axis=0), axis=1)
-    if np.any(ds < .01):
-        raise ValueError('Duplicate or very short centerline segments')
-    s_original = np.r_[0, np.cumsum(ds)]
-    s = np.linspace(0, s_original[-1], math.ceil(s_original[-1]/config['sample_spacing_m'])+1)
-    # Smooth a distance-resampled polyline locally. A global cubic spline can
-    # overshoot sparse OSM nodes and cut corners through adjacent buildings.
-    xy = np.c_[np.interp(s,s_original,xy_original[:,0]),np.interp(s,s_original,xy_original[:,1])]
-    smoothing=alignment.get('recommended_resample_smoothing_sigma_m',2.)/config['sample_spacing_m']
-    xy = gaussian_filter1d(xy,sigma=smoothing,axis=0,mode='nearest')
-    if alignment.get('applied'):
-        xy[[0,-1]]=xy_original[[0,-1]]
+    shared=config.get('_road_profile')
+    if shared:
+        # Long routes compute one canonical profile before loading the heavy
+        # scene data. Never re-smooth its windows or reset their UV distance.
+        xy=xy_original=np.asarray(shared['xy'],dtype=float)
+        if xy.ndim!=2 or xy.shape[1]!=2 or len(xy)<2 or not np.isfinite(xy).all():
+            raise ValueError('Invalid shared road profile')
+        lonlat=np.empty((len(xy),2))
+        alignment={'applied':False,'source':'Shared globally smoothed route profile'}
+        route_selection={}
+    else:
+        lonlat = ordered_road(ways)
+        transform = Transformer.from_crs(4326, 25832, always_xy=True)
+        xy_original = np.array(transform.transform(lonlat[:, 0], lonlat[:, 1])).T
+        xy_original, alignment = load_alignment(data_dir,xy_original)
+        xy_original, route_selection = select_route(xy_original, config.get('route_start_m'), config.get('route_end_m'))
+        ds = np.linalg.norm(np.diff(xy_original, axis=0), axis=1)
+        if np.any(ds < .01):
+            raise ValueError('Duplicate or very short centerline segments')
+        s_original = np.r_[0, np.cumsum(ds)]
+        s = np.linspace(0, s_original[-1], math.ceil(s_original[-1]/config['sample_spacing_m'])+1)
+        # Smooth a distance-resampled polyline locally. A global cubic spline
+        # can overshoot sparse nodes and cut adjacent building corners.
+        xy = np.c_[np.interp(s,s_original,xy_original[:,0]),np.interp(s,s_original,xy_original[:,1])]
+        smoothing=alignment.get('recommended_resample_smoothing_sigma_m',2.)/config['sample_spacing_m']
+        xy = gaussian_filter1d(xy,sigma=smoothing,axis=0,mode='nearest')
+        if alignment.get('applied'):
+            xy[[0,-1]]=xy_original[[0,-1]]
     line = LineString(xy)
     if not line.is_simple:
         raise ValueError('Interpolated road crosses itself')
-    if max(LineString(xy_original).distance(__import__('shapely').Point(p)) for p in xy) > 1.5:
+    if not shared and max(LineString(xy_original).distance(__import__('shapely').Point(p)) for p in xy) > 1.5:
         raise ValueError('Road interpolation deviates too far from source')
-    tangent = np.gradient(xy, axis=0)
+    tangent = np.asarray(shared['tangent'],dtype=float) if shared else np.gradient(xy, axis=0)
     tangent /= np.linalg.norm(tangent, axis=1)[:, None]
-    left = np.c_[-tangent[:, 1], tangent[:, 0]]
+    left = np.asarray(shared['left'],dtype=float) if shared else np.c_[-tangent[:, 1], tangent[:, 0]]
     dem = Heights(data_dir / 'dgm1.tif')
-    raw_heights = np.median(np.array([dem(xy + left*k) for k in (-.8, 0, .8)]), axis=0)
-    road_y = gaussian_filter1d(raw_heights, sigma=3, mode='nearest')
-    road_widths = widths_at(xy,alignment,config['road_width_m'])
+    raw_heights = (np.asarray(shared['raw_heights'],dtype=float) if shared else
+                  np.median(np.array([dem(xy + left*k) for k in (-.8, 0, .8)]), axis=0))
+    road_y = np.asarray(shared['road_y'],dtype=float) if shared else gaussian_filter1d(raw_heights, sigma=3, mode='nearest')
+    road_widths = np.asarray(shared['road_widths'],dtype=float) if shared else widths_at(xy,alignment,config['road_width_m'])
+    if any(value.shape!=(len(xy),) or not np.isfinite(value).all() for value in (raw_heights,road_y,road_widths)):
+        raise ValueError('Invalid shared road heights or widths')
     half = road_widths/2
     crossfall=float(config.get('road_crossfall',0.))
     if not np.isfinite(crossfall) or not 0 <= crossfall <= .04:
@@ -135,10 +149,10 @@ def prepare(root: Path, config: dict):
     road_polygon = Polygon(np.vstack([left_edge, right_edge[::-1]]))
     if not road_polygon.is_valid:
         raise ValueError('Road width creates overlapping edges')
-    origin = xy.mean(axis=0)
-    height_origin = float(road_y.min())
+    origin = np.asarray(shared['origin_utm32'],dtype=float) if shared else xy.mean(axis=0)
+    height_origin = float(shared['height_origin_m']) if shared else float(road_y.min())
     spacing = np.linalg.norm(np.diff(xy, axis=0), axis=1)
-    distance = np.r_[0, np.cumsum(spacing)]
+    distance = np.asarray(shared['distance'],dtype=float) if shared else np.r_[0, np.cumsum(spacing)]
     grades = np.diff(road_y) / spacing
     if np.max(np.abs(grades)) > .25:
         raise ValueError('Unexpected road gradient exceeds 25 percent')
@@ -275,10 +289,15 @@ def prepare(root: Path, config: dict):
     # with, including export rounding, rather than resampling the source DGM.
     ground_sampler=ExportedTerrainSampler.from_scene(scene,origin,height_origin)
 
+    ownership=None
+    if config.get('_ownership_polygon'):
+        from shapely.geometry import shape
+        ownership=shape(config['_ownership_polygon'])
     building_stats=build_lod2(data_dir,textures,scene,material,add_mesh,ac,line,road_polygon,dem,ortho_bounds,
                               allow_outside_photo_overrides=config.get('allow_outside_photo_overrides',False),
                               terrain_height_sampler=ground_sampler,
-                              base_road_reservation=unary_union([road_polygon,street_context['other_roads']]))
+                              base_road_reservation=unary_union([road_polygon,street_context['other_roads']]),
+                              ownership_polygon=ownership)
     building_count=building_stats['buildings']
     scenery_stats=build_scenery(data_dir,textures,config,scene,material,add_mesh,ac,
                                 xy,road_y,tangent,left,distance,road_polygon,dem,flatten,road_widths=road_widths,
@@ -307,7 +326,10 @@ def prepare(root: Path, config: dict):
     marking_stats=build_road_markings(data_dir,textures,scene,material,add_mesh,ac)
 
     # Physical barriers across the ends clearly mark this finite test area.
+    section=config.get('_section',{})
     for end in (0,len(xy)-1):
+        if (end==0 and not section.get('first',True)) or (end!=0 and not section.get('last',True)):
+            continue
         k=5 if end==0 else len(xy)-6
         center=xy[k]; l=left[k]; t=tangent[k]
         h=half[k]
@@ -324,13 +346,14 @@ def prepare(root: Path, config: dict):
         right=np.cross(np.array([0,1,0]),forward)
         matrix=[[*right,0],[0,1,0,0],[*forward,0],[*p,1]]
         scene['markers'].append({'name':name,'matrix':matrix})
-    for i in range(config['pitboxes']):
-        marker(f'AC_PIT_{i}',18+i*9)
-        marker(f'AC_START_{i}',18+i*9)
-    marker('AC_HOTLAP_START_0',18)
+    if section.get('first',True):
+        for i in range(config['pitboxes']):
+            marker(f'AC_PIT_{i}',18+i*9)
+            marker(f'AC_START_{i}',18+i*9)
+        marker('AC_HOTLAP_START_0',18)
     # Point-to-point practice; no generated AI or lap timing is claimed.
     metadata={'id':config['id'],'name':config['name'],'version':config['version'],
-              'length_m':round(float(distance[-1]),2),'elevation_min_m':round(float(road_y.min()),2),
+              'length_m':round(float(distance[-1]-distance[0]),2),'elevation_min_m':round(float(road_y.min()),2),
               'elevation_max_m':round(float(road_y.max()),2),'max_gradient_percent':round(float(abs(grades).max()*100),2),
               'minimum_radius_m':round(float(1/max(curve.max(),1e-9)),2),'buildings':building_count,
               'road_width_m':config['road_width_m'],'origin_utm32':origin.tolist(),'height_origin_m':height_origin,
@@ -378,5 +401,11 @@ def prepare(root: Path, config: dict):
     (data_dir/'scene.json').write_text(json.dumps(scene,separators=(',',':')),encoding='utf-8')
     (data_dir/'manifest.json').write_text(json.dumps({k:v for k,v in metadata.items() if k!='centerline_ac'},indent=2,ensure_ascii=False),encoding='utf-8')
     np.savez_compressed(data_dir/'centerline.npz',positions=ac(xy,road_y),distance=distance,raw_heights=raw_heights)
-    print(json.dumps({k:v for k,v in metadata.items() if k not in ('centerline_ac','scenery_placement')},ensure_ascii=False,indent=2))
+    # Full geometric evidence belongs in scene/manifest files. Printing every
+    # basement and terrace record multiplies multi-section build logs by GB.
+    log_fields=('id','name','version','length_m','buildings','elevation_min_m',
+                'elevation_max_m','max_gradient_percent','minimum_radius_m')
+    log={key:metadata[key] for key in log_fields if key in metadata}
+    log['source_warning_count']=len(metadata.get('source_route',{}).get('warnings',[]))
+    print(json.dumps(log,ensure_ascii=False,indent=2))
     return scene
